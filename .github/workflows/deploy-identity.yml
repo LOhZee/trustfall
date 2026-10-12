@@ -54,7 +54,7 @@ jobs:
         run: |
           set -euo pipefail
           az deployment group create \
-            --resource-group 'policy-pipeline-identity' \
+            --resource-group 'rg-pipeline-identity' \
             --name policy-pipeline-identity \
             --template-file "$RUNNER_TEMP/pipeline-identity.json" \
             --parameters githubOrg="$GITHUB_ORG" githubRepo="$GITHUB_REPO" \
