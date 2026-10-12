@@ -30,7 +30,7 @@ var resourcePolicyContributorRoleId = '36243c78-bf99-498c-9df9-86d9f8d28608'
 var uamiName = 'uami-gha-policy-pipeline'
 // Computed directly (not via module output) because `guid()` in a resource's
 // `name` property must be calculable before the module actually deploys.
-var uamiResourceId = resourceId(identityResourceGroupName, 'Microsoft.ManagedIdentity/userAssignedIdentities', uamiName)
+var uamiResourceId = resourceId(subscription().subscriptionId, identityResourceGroupName, 'Microsoft.ManagedIdentity/userAssignedIdentities', uamiName)
 
 resource identityRg 'Microsoft.Resources/resourceGroups@2023-07-01' = {
   name: identityResourceGroupName
