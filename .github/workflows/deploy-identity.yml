@@ -43,7 +43,7 @@ jobs:
           done
           exit $missing
       - name: Build identity template
-        run: az bicep build --file infra/pipeline-identity.VULNERABLE.bicep --outfile "$RUNNER_TEMP/pipeline-identity.json"
+        run: az bicep build --file infra/pipeline-identity.bicep --outfile "$RUNNER_TEMP/pipeline-identity.json"
       - uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
