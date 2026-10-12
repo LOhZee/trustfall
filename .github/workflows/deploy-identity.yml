@@ -19,7 +19,7 @@ jobs:
       contents: read
       id-token: write
     env:
-      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       AZURE_LOCATION: ${{ vars.AZURE_LOCATION || 'westeurope' }}
       IDENTITY_RESOURCE_GROUP: ${{ vars.IDENTITY_RESOURCE_GROUP || 'rg-policy-pipeline' }}
       GITHUB_ORG: ${{ github.repository_owner }}
@@ -31,13 +31,13 @@ jobs:
       - name: Validate required environment variables
         shell: bash
         env:
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
         run: |
           missing=0
           for name in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID; do
             if [ -z "${!name}" ]; then
-              echo "::error::Variable $name is not set in the 'production-bootstrap' environment (Settings > Environments > production-bootstrap > Environment variables)."
+              echo "::error::Variable $name is not set in the repository or 'production-bootstrap' environment variables."
               missing=1
             fi
           done
@@ -46,16 +46,17 @@ jobs:
         run: az bicep build --file infra/pipeline-identity.bicep --outfile "$RUNNER_TEMP/pipeline-identity.json"
       - uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       - name: Deploy identity and production federation
         shell: bash
         run: |
           set -euo pipefail
-          az deployment group create \
-            --resource-group 'rg-policy-pipeline' \
+          az deployment sub create \
             --name policy-pipeline-identity \
+            --subscription "$AZURE_SUBSCRIPTION_ID" \
+            --location "$AZURE_LOCATION" \
             --template-file "$RUNNER_TEMP/pipeline-identity.json" \
             --parameters githubOrg="$GITHUB_ORG" githubRepo="$GITHUB_REPO" \
               githubEnvironment=production identityResourceGroupName="$IDENTITY_RESOURCE_GROUP" \
