@@ -21,7 +21,7 @@ param remediationIdentityResourceId string
 param location string = 'westeurope'
 
 resource policyAssignment 'Microsoft.Authorization/policyAssignments@2022-06-01' = {
-  name: 'demo-diag-settings-assignment'
+  name: 'demo-diag-settings'
   location: location
   identity: {
     type: 'UserAssigned'
