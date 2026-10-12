@@ -1,5 +1,5 @@
 // modules/scoped-role-assignment.bicep
-// Helper module so a management-group-scoped deployment can grant a role at a
+// Helper module so a subscription/management-group-scoped deployment can grant a role at a
 // specific resource group scope (Bicep requires the deployment's own scope to
 // match the resource being created when using a bare `scope:` property).
 

@@ -12,7 +12,7 @@ az deployment sub create --location westeurope \
    Configure the GitHub repo: Settings > Environments > `production` > require
    reviewers; Settings > Secrets and variables > Actions > Variables: set
    `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`,
-   `MANAGEMENT_GROUP_ID`, `LOG_ANALYTICS_WORKSPACE_ID`, `TARGET_RESOURCE_GROUP`.
+   `MANAGEMENT_GROUP_ID`, `LOG_ANALYTICS_WORKSPACE_ID`, `REMEDIATION_IDENTITY_RESOURCE_ID`.
    Push to `main` → `deploy-policy.yml` runs, waits for required review, deploys
    cleanly. **Narrate:** "OIDC, no secrets, least privilege pipeline identity,
    required reviewers, minimal explicit remediation role. This is what 'done

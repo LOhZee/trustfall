@@ -1,8 +1,10 @@
 // policy-assignment.bicep
-// Assigns the custom policy and gives its remediation identity ONLY the role the
-// policy definition declares (Log Analytics Contributor, scoped to the target
-// resource group) — NOT a blanket Contributor grant. This is the secure baseline;
-// contrast with policy-assignment.VULNERABLE.bicep for the demo.
+// Assigns the custom policy with a PRE-PROVISIONED user-assigned remediation
+// identity (see remediation-identity.bicep, deployed out of band by an admin).
+// That identity already holds ONLY Log Analytics Contributor on ONE target
+// resource group. This template creates no role assignments, so the pipeline
+// identity never needs Microsoft.Authorization/roleAssignments/write.
+// This is the secure baseline; contrast with policy-assignment.VULNERABLE.bicep.
 
 targetScope = 'managementGroup'
 
@@ -12,22 +14,20 @@ param policyDefinitionId string
 @description('Resource ID of the Log Analytics workspace parameter value')
 param logAnalyticsWorkspaceId string
 
-@description('Subscription ID that contains the target resource group — keep the grant as narrow as possible')
-param remediationTargetSubscriptionId string
+@description('Resource ID of the pre-provisioned remediation user-assigned managed identity')
+param remediationIdentityResourceId string
 
-@description('Resource group name the remediation identity is scoped to')
-param remediationTargetResourceGroupName string
-
-@description('Location for the system-assigned identity')
+@description('Location for the assignment identity metadata')
 param location string = 'westeurope'
-
-var logAnalyticsContributorRoleId = '92aaf0da-9dab-42b6-94a3-d43ce8d16293'
 
 resource policyAssignment 'Microsoft.Authorization/policyAssignments@2022-06-01' = {
   name: 'demo-diag-settings-assignment'
   location: location
   identity: {
-    type: 'SystemAssigned'
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${remediationIdentityResourceId}': {}
+    }
   }
   properties: {
     displayName: 'Demo - Deploy diagnostic settings (secure baseline)'
@@ -40,17 +40,5 @@ resource policyAssignment 'Microsoft.Authorization/policyAssignments@2022-06-01'
   }
 }
 
-// Explicit, minimal, PR-reviewable grant — scoped to ONE target resource group,
-// not the whole management group/subscription, and only the role the policy
-// actually needs (Log Analytics Contributor), never Contributor/Owner.
-module grantRemediationRole 'modules/scoped-role-assignment.bicep' = {
-  name: 'grantRemediationRole'
-  scope: resourceGroup(remediationTargetSubscriptionId, remediationTargetResourceGroupName)
-  params: {
-    principalId: policyAssignment.identity.principalId
-    roleDefinitionId: logAnalyticsContributorRoleId
-    nameSeed: policyAssignment.id
-  }
-}
-
-output remediationIdentityPrincipalId string = policyAssignment.identity.principalId
+output policyAssignmentId string = policyAssignment.id
+output remediationIdentityResourceId string = remediationIdentityResourceId

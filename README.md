@@ -22,9 +22,10 @@ What's in `files/azure-identity-demo/` (saved to your session storage)
 | `infra/pipeline-identity.bicep` | **Secure baseline**: UAMI + FIC scoped to `environment:production` (exact match), Resource Policy Contributor only |
 | `infra/pipeline-identity.VULNERABLE.bicep` | **Demo variant**: wildcard FIC subject (`ref:refs/heads/*`), Contributor at management-group scope |
 | `infra/policy-definition.bicep` | Realistic custom `deployIfNotExists` policy (diagnostic settings) |
-| `infra/policy-assignment.bicep` / `.VULNERABLE.bicep` | Contrast: explicit minimal remediation role vs. broad auto-granted Contributor |
+| `infra/remediation-identity.bicep` | **Admin-run, out of band**: pre-provisioned remediation UAMI with only Log Analytics Contributor on one RG |
+| `infra/policy-assignment.bicep` / `.VULNERABLE.bicep` | Contrast: pre-provisioned minimal remediation identity vs. broad auto-granted Contributor |
 | `.github/workflows/deploy-identity.yml` | Manually bootstrap the secure pipeline identity |
-| `.github/workflows/deploy-policy.yml` | Deploy the secure policy definition, then its assignment and scoped remediation role |
+| `.github/workflows/deploy-policy.yml` | Deploy the secure policy definition, then its assignment bound to the pre-provisioned remediation identity |
 | `attack/malicious-template-injection.json` | The attacker payload — injects an Owner role assignment, laundered through the remediation identity |
 | `attack/attack-walkthrough.md` | Full live-demo script: setup, attack steps, reset commands, closing mitigation slide |
 
@@ -36,7 +37,7 @@ What's in `files/azure-identity-demo/` (saved to your session storage)
 | FIC subject | `repo:org/repo:environment:production` (exact match) | `repo:org/repo:ref:refs/heads/*` (wildcard — any branch) |
 | GitHub Environment protection | Required reviewers + restricted to `main` | None |
 | Pipeline identity scope | Resource Policy Contributor at **subscription scope** in the identity template; management-group access must be provisioned separately for policy deployment | Resource Policy Contributor at **management group** |
-| Remediation MI role grant | Explicit, minimal (e.g. `Log Analytics Contributor`), scoped to target RG, reviewed in PR diff | `Contributor` at management group scope, auto-expanded by a "helper" policy initiative |
+| Remediation MI role grant | Pre-provisioned UAMI with explicit, minimal `Log Analytics Contributor` on the target RG, granted out of band by an admin; no pipeline identity holds `roleAssignments/write` | `Contributor` at management group scope, auto-expanded by a "helper" policy initiative |
 | Branch protection on policy repo | Required PR review, no direct push to `main` | Direct push allowed / stale unpinned third-party Action |
 
 1. Run the secure baseline first to show "this looks airtight, OIDC, no secrets, least privilege."
@@ -65,8 +66,7 @@ Set the following repository-level Actions variables:
 | `AZURE_SUBSCRIPTION_ID` | Subscription containing the pipeline identity |
 | `MANAGEMENT_GROUP_ID` | Management group containing the policy definition and assignment |
 | `LOG_ANALYTICS_WORKSPACE_ID` | Full resource ID of an existing Log Analytics workspace |
-| `REMEDIATION_TARGET_SUBSCRIPTION_ID` | Subscription containing the remediation target RG |
-| `REMEDIATION_TARGET_RESOURCE_GROUP` | Existing RG to receive the remediation role grant |
+| `REMEDIATION_IDENTITY_RESOURCE_ID` | Full resource ID of the remediation UAMI (`remediationIdentityResourceId` output of `infra/remediation-identity.bicep`) |
 | `AZURE_LOCATION` | Optional deployment/identity location; defaults to `westeurope` |
 | `IDENTITY_RESOURCE_GROUP` | Optional identity RG name; defaults to `rg-policy-pipeline` |
 
@@ -78,10 +78,11 @@ Set `AZURE_CLIENT_ID` **separately on each environment**:
   before either workflow can use it. Grant it resource-group, managed-identity,
   federated-credential, and deployment management permissions in the identity
   subscription, plus permission to create the template's subscription role
-  assignment. For policy assignment deployment it also needs policy assignment
-  and deployment permissions at the management group, and deployment and role
-  assignment permissions at the remediation target RG. Scope RBAC administration
-  narrowly and use role-assignment conditions where possible.
+  assignment. For policy assignment deployment it needs only policy assignment
+  and deployment permissions at the management group (e.g. Resource Policy
+  Contributor) and Managed Identity Operator on the remediation UAMI. It needs
+  **no** RBAC administration rights for the policy assignment: the remediation
+  role grant is made out of band by an administrator.
 - `production`: the `uamiClientId` output of the identity deployment. Its FIC
   trusts exactly `repo:<owner>/<repo>:environment:production`. The template
   grants Resource Policy Contributor at subscription scope, **not** management
@@ -95,6 +96,18 @@ values if the bootstrap identity uses a different login subscription.
 ### Deployment order
 
 1. Provision the bootstrap identity and environment protections out of band.
+   An administrator also deploys `infra/remediation-identity.bicep` (never from a
+   pipeline), passing the bootstrap identity's object ID as
+   `assignmentDeployerPrincipalId`, and sets `REMEDIATION_IDENTITY_RESOURCE_ID`
+   to its output:
+
+   ```bash
+   az deployment sub create --location westeurope \
+     --template-file infra/remediation-identity.bicep \
+     --parameters remediationTargetSubscriptionId=<sub-id> \
+       remediationTargetResourceGroupName=<rg> \
+       assignmentDeployerPrincipalId=<bootstrap-sp-object-id>
+   ```
 2. Run **Deploy Pipeline Identity** manually from `main`. It creates the
    identity RG, UAMI, production FIC, and subscription policy-contributor grant.
    The final step prints the template outputs, including `uamiClientId`.
@@ -102,11 +115,16 @@ values if the bootstrap identity uses a different login subscription.
    its management-group policy permissions as described above.
 4. Run **Deploy Policy** manually from `main`, or push a change to its workflow
    or secure policy templates. The production job deploys the definition; the
-   separately approved bootstrap job then deploys the assignment and explicit
-   RG-scoped Log Analytics Contributor grant using the definition's output ID.
+   separately approved bootstrap job then deploys the assignment, bound to the
+   pre-provisioned remediation UAMI, using the definition's output ID.
 
 The workspace and remediation target RG must already exist, and the target
 subscription must belong to the selected management group's hierarchy. The
 workflows build the Bicep templates before deployment and serialize runs to
 avoid overlapping updates. They do not create remediation tasks for existing
 noncompliant resources; trigger those separately when needed.
+
+**Trade-off:** the remediation role grant moves out of the PR-reviewed pipeline
+into an admin-run IaC step. In exchange, no identity reachable from GitHub can
+write role assignments, so pipeline-deployed code can only *bind* the existing,
+minimally scoped remediation identity — it cannot widen its permissions.
