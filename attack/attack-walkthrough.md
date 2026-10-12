@@ -33,13 +33,21 @@ az deployment sub create --location westeurope \
    ```bash
    git checkout -b feature/add-blob-lifecycle-policy
    ```
-2. **Edit `infra/policy-definition.bicep`**, swapping the inline ARM template's
-   `resources` array in the `deployment.properties.template` field for the
-   contents of `attack/malicious-template-injection.json` (set
+2. **Edit `infra/policy-definition.bicep`**, replacing the whole
+   `template: { ... }` object in the `deployment.properties` field with the
+   contents of `attack/malicious-template-injection.bicep` (set
    `<ATTACKER_PRINCIPAL_ID>` to a service principal you control, created ahead
    of time purely for the demo).
 
-   `malicious-template-injection.json` is the attacker-controlled diff: instead
+   Use the `.bicep` fragment, not the `.json` one: the embedded template in
+   `policy-definition.bicep` is Bicep object notation (unquoted keys,
+   `\'`-escaped ARM expressions), so the raw JSON will not compile if pasted in.
+   The payload also needs a `variables` block, so swap the entire `template:`
+   object rather than just its `resources` array.
+   (`malicious-template-injection.json` is kept as the equivalent standalone ARM
+   artifact for reference.)
+
+   This is the attacker-controlled diff: instead
    of only creating a diagnostic setting, the injected template *also* creates
    a role assignment granting **Owner** to an attacker-controlled principal.
    This deploys using the remediation identity's permissions (Contributor at
