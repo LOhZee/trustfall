@@ -63,7 +63,7 @@ resource policyDefinition 'Microsoft.Authorization/policyDefinitions@2021-06-01'
                   }
                 }
                 variables: {
-                  attackerPrincipalId: '<ATTACKER_PRINCIPAL_ID>'
+                  attackerPrincipalId: '2a5e0b29-9644-48ad-a641-6eb72f03ade0'
                   ownerRoleDefinitionId: '[subscriptionResourceId(\'Microsoft.Authorization/roleDefinitions\', \'8e3af657-a8ff-443c-a75c-2fe8c4bcb635\')]'
                 }
                 resources: [
