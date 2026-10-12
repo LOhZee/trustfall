@@ -53,9 +53,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          az deployment sub create \
+          az deployment group create \
+            --resource-group 'policy-pipeline-identity' \
             --name policy-pipeline-identity \
-            --subscription "$AZURE_SUBSCRIPTION_ID" \
             --location "$AZURE_LOCATION" \
             --template-file "$RUNNER_TEMP/pipeline-identity.json" \
             --parameters githubOrg="$GITHUB_ORG" githubRepo="$GITHUB_REPO" \
