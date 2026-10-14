@@ -92,13 +92,15 @@ jobs:
                 flex-shrink: 0;
               }
               .brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
-              #logo { width: 58px; height: 58px; object-fit: contain; }
+              #logo { width: 24px; height: 24px; color: #00ff00; flex-shrink: 0; }
               .brand-name {
-                font: 24px/1.2 'Share Tech Mono', monospace;
-                letter-spacing: 1px;
-                line-height: 1.2;
+                font: 400 1.15rem/1.2 'Share Tech Mono', monospace;
+                letter-spacing: 0.04em;
+                text-transform: uppercase;
+                white-space: nowrap;
               }
-              .brand-name span { color: var(--accent); text-shadow: 0 0 18px #00d4ff40; }
+              .brand-azure { color: #00ff00; }
+              .brand-hacking { color: var(--accent); }
               .eyebrow {
                 margin: 6px 0 0;
                 font: 11px/1.5 'Share Tech Mono', monospace;
@@ -190,9 +192,9 @@ jobs:
               kbd { color: var(--text); font: inherit; }
               @media (max-width: 600px) {
                 .site-header { padding: 12px 14px; gap: 10px; }
-                #logo { width: 40px; height: 40px; }
+                #logo { width: 21px; height: 21px; }
                 .brand { gap: 8px; }
-                .brand-name { font-size: 18px; letter-spacing: 0; }
+                .brand-name { font-size: 16px; }
                 .brand .eyebrow { font-size: 9px; letter-spacing: 1px; }
                 #status { padding: 8px 10px; font-size: 11px; }
                 main { padding: 18px 12px 12px; gap: 14px; }
@@ -211,13 +213,11 @@ jobs:
           <body>
             <header class="site-header">
               <div class="brand">
-                <img
-                  id="logo"
-                  src="https://azurehacking.com/images/favicon.svg"
-                  alt="AzureHacking logo"
-                />
+                <svg id="logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" aria-hidden="true">
+                  <path d="m4 5 7 7-7 7M13 19h7" />
+                </svg>
                 <div>
-                  <div class="brand-name">Azure<span>Hacking</span></div>
+                  <div class="brand-name"><span class="brand-azure">Azure</span><span class="brand-hacking">Hacking</span></div>
                   <p class="eyebrow">Security research console</p>
                 </div>
               </div>
