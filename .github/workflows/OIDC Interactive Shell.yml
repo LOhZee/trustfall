@@ -11,10 +11,11 @@ jobs:
       options: --privileged --init
 
     permissions:
-      id-token: write # Required for OIDC environment variables
+      id-token: write # Required to inject OIDC environment variables
 
     steps:
       - name: Initialize Interactive Terminal
+        shell: bash # Ensure bash is used for the run block
         run: |
           # Verify OIDC variables
           if [ -z "$ACTIONS_ID_TOKEN_REQUEST_URL" ] || [ -z "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
@@ -24,7 +25,8 @@ jobs:
 
           echo "=== OIDC Interactive Shell Initializing ==="
           echo "ACTIONS_ID_TOKEN_REQUEST_URL: $ACTIONS_ID_TOKEN_REQUEST_URL"
-          echo "ACTIONS_ID_TOKEN_REQUEST_TOKEN: ${ACTIONS_ID_TOKEN_REQUEST_TOKEN:0:20}..."
+          # POSIX-compatible way to print first 20 chars
+          echo "ACTIONS_ID_TOKEN_REQUEST_TOKEN: $(echo $ACTIONS_ID_TOKEN_REQUEST_TOKEN | cut -c1-20)..."
 
           # 1. Install dependencies
           apt-get update && apt-get install -y curl jq
@@ -71,7 +73,7 @@ jobs:
 
               ws.onmessage = (e) => {
                 term.write(e.data);
-              };
+              });
 
               term.onData((data) => {
                 if (ws.readyState === WebSocket.OPEN) {
