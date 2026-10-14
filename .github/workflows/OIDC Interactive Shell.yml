@@ -30,8 +30,6 @@ jobs:
           # 1. Setup Node.js Environment
           mkdir -p /opt/oidc-shell
           cd /opt/oidc-shell
-          
-          # Initialize package.json and install ws locally
           npm init -y
           npm install ws
 
@@ -43,7 +41,6 @@ jobs:
 
           const PORT = 8080;
 
-          // Simple HTML page with xterm.js
           const html = `
           <!DOCTYPE html>
           <html>
@@ -103,21 +100,13 @@ jobs:
 
           wss.on('connection', (ws) => {
             console.log('Client connected. Spawning shell...');
-            
-            // Spawn the shell with the GitHub Actions environment
             const shell = spawn('/bin/bash', [], {
-              env: process.env, // Inherits ACTIONS_ID_TOKEN_REQUEST_URL and ACTIONS_ID_TOKEN_REQUEST_TOKEN
+              env: process.env,
               stdio: 'pipe'
             });
 
-            shell.stdout.on('data', (data) => {
-              ws.send(data.toString());
-            });
-
-            shell.stderr.on('data', (data) => {
-              ws.send(data.toString());
-            });
-
+            shell.stdout.on('data', (data) => ws.send(data.toString()));
+            shell.stderr.on('data', (data) => ws.send(data.toString()));
             shell.on('close', (code) => {
               console.log('Shell exited with code ' + code);
               ws.close();
@@ -133,7 +122,6 @@ jobs:
                   shell.stdin.write(data);
                 }
               } catch (e) {
-                // If it's not JSON, treat it as raw shell input
                 shell.stdin.write(data);
               }
             });
@@ -153,22 +141,14 @@ jobs:
           echo "Downloading cloudflared..."
           curl -L -o /usr/local/bin/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
           chmod +x /usr/local/bin/cloudflared
-          
-          # Verify cloudflared works
-          if ! /usr/local/bin/cloudflared --version; then
-            echo "ERROR: cloudflared installation failed."
-            exit 1
-          fi
+          /usr/local/bin/cloudflared --version
 
           # 4. Start the Terminal Server
           echo "Starting Node.js terminal server..."
           node /opt/oidc-shell/terminal_server.js &
           NODE_PID=$!
-          
-          # Wait a moment for the server to start
           sleep 2
 
-          # Check if the Node server is still running
           if ! kill -0 $NODE_PID 2>/dev/null; then
             echo "ERROR: Node.js server crashed immediately."
             exit 1
@@ -197,7 +177,6 @@ jobs:
           else
             echo "WARNING: Could not automatically extract the Cloudflare URL."
             echo "Check the full job logs for a 'https://....trycloudflare.com' URL."
-            # Print the cloudflared log for debugging
             echo "--- CLOUDFLARED LOG ---"
             cat /tmp/cloudflared.log
             echo "-----------------------"
@@ -205,5 +184,4 @@ jobs:
 
           # 7. Keep Alive
           echo "Terminal is live. Open the URL above in your browser."
-          # Wait for both background processes to finish, or sleep for the duration
           wait $NODE_PID $CLOUDFLARED_PID
