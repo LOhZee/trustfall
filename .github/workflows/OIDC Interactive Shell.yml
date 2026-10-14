@@ -103,9 +103,9 @@ jobs:
             <script src="https://unpkg.com/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
             <script>
               const status = document.getElementById('status');
-              const term = new Terminal({ 
-                cursorBlink: true, 
-                cursorStyle: 'block', 
+              const term = new Terminal({
+                cursorBlink: true,
+                cursorStyle: 'block',
                 fontSize: 14,
                 fontFamily: 'monospace'
               });
@@ -175,7 +175,7 @@ jobs:
           </html>`;
 
           const server = http.createServer((req, res) => {
-            console.log(`HTTP Request: ${req.method} ${req.url}`);
+            console.log(\`HTTP Request: \${req.method} \${req.url}\`);
             res.writeHead(200, { 'Content-Type': 'text/html' });
             res.end(html);
           });
@@ -184,7 +184,7 @@ jobs:
 
           wss.on('connection', (ws) => {
             console.log('Client connected. Spawning PTY shell...');
-            
+
             // Spawn a real pseudo-terminal
             // This ensures prompts, Ctrl+C, and resizing work correctly
             const shell = pty.spawn('/bin/bash', [], {
@@ -195,14 +195,15 @@ jobs:
               env: process.env // Inherits ACTIONS_ID_TOKEN_REQUEST_URL and ACTIONS_ID_TOKEN_REQUEST_TOKEN
             });
 
-            // Print ASCII art banner in terminal
+            // Print ASCII art banner in terminal (ASCII-only to avoid UTF-8/PTY issues)
             shell.write('\r\n');
-            shell.write('██████╗ ██╗    ██╗███╗   ██╗███████╗██████╗      ██████╗ ██╗████████╗██╗  ██╗██╗   ██╗██████╗ \r\n');
-            shell.write('██╔══██╗██║    ██║████╗  ██║██╔════╝██╔══██╗    ██╔════╝ ██║╚══██╔══╝██║  ██║██║   ██║██╔══██╗\r\n');
-            shell.write('██████╔╝██║ █╗ ██║██╔██╗ ██║█████╗  ██║  ██║    ██║  ███╗██║   ██║   ███████║██║   ██║██████╔╝\r\n');
-            shell.write('██╔═══╝ ██║███╗██║██║╚██╗██║██╔══╝  ██║  ██║    ██║   ██║██║   ██║   ██╔══██║██║   ██║██╔══██╗\r\n');
-            shell.write('██║     ╚███╔███╔╝██║ ╚████║███████╗██████╔╝    ╚██████╔╝██║   ██║   ██║  ██║╚██████╔╝██████╔╝\r\n');
-            shell.write('╚═╝      ╚══╝╚══╝ ╚═╝  ╚═══╝╚══════╝╚═════╝      ╚═════╝ ╚═╝   ╚═╝   ╚═╝  ╚═╝ ╚═════╝ ╚═════╝ \r\n');
+            shell.write('============================================================\r\n');
+            shell.write('   ____  __        ___   _ _____ ____    ____ _ _   _   _ \r\n');
+            shell.write('  |  _ \\ \\ \\      / / \\ | | ____|  _ \\  / ___(_) |_| | | |\r\n');
+            shell.write('  | |_) | \\ \\ /\\ / /|  \\| |  _| | | | | | |  _| | __| |_| |\r\n');
+            shell.write('  |  __/   \\ V  V / | |\\  | |___| |_| | | |_| | | |_|  _  |\r\n');
+            shell.write('  |_|       \\_/\\_/  |_| \\_|_____|____/   \\____|_|\\__|_| |_|\r\n');
+            shell.write('============================================================\r\n');
             shell.write('\r\n');
 
             // Send PTY output to the WebSocket
@@ -213,7 +214,7 @@ jobs:
             });
 
             shell.onExit(({ exitCode }) => {
-              console.log(`Shell exited with code ${exitCode}`);
+              console.log(\`Shell exited with code \${exitCode}\`);
               ws.close();
             });
 
@@ -224,7 +225,7 @@ jobs:
                 if (json.type === 'resize') {
                   // Resize the PTY
                   shell.resize(json.cols, json.rows);
-                  console.log(`PTY resized to ${json.cols}x${json.rows}`);
+                  console.log(\`PTY resized to \${json.cols}x\${json.rows}\`);
                 } else {
                   // Write raw input to the PTY
                   shell.write(data);
@@ -242,7 +243,7 @@ jobs:
           });
 
           server.listen(PORT, '0.0.0.0', () => {
-            console.log(`Terminal server listening on port ${PORT}`);
+            console.log(\`Terminal server listening on port \${PORT}\`);
           });
           EOF
 
