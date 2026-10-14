@@ -10,17 +10,17 @@ jobs:
       image: node:18-bullseye
       options: --privileged --init
 
+    # CRITICAL: This block is required to inject the OIDC environment variables
+    permissions:
+      id-token: write # Required to request the ID token
+
     steps:
       - name: Initialize Proxy Environment
-        # The env context is NOT used here. Instead, we rely on the 
-        # ACTIONS_ID_TOKEN_REQUEST_URL and ACTIONS_ID_TOKEN_REQUEST_TOKEN 
-        # being automatically injected into the step's environment by 
-        # the GitHub Actions runner when OIDC is enabled.
-        
         run: |
           # Verify the variables are present in the environment
           if [ -z "$ACTIONS_ID_TOKEN_REQUEST_URL" ] || [ -z "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
-            echo "ERROR: OIDC environment variables are not set. Ensure the workflow is running on a GitHub-hosted runner and the repository has OIDC configured (or is using the default)."
+            echo "ERROR: OIDC environment variables are not set."
+            echo "This usually means the 'id-token: write' permission is missing."
             exit 1
           fi
 
