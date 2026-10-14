@@ -15,7 +15,7 @@ jobs:
 
     steps:
       - name: Initialize Interactive Terminal
-        shell: bash # Ensure bash is used for the run block
+        shell: bash
         run: |
           # Verify OIDC variables
           if [ -z "$ACTIONS_ID_TOKEN_REQUEST_URL" ] || [ -z "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
@@ -25,19 +25,16 @@ jobs:
 
           echo "=== OIDC Interactive Shell Initializing ==="
           echo "ACTIONS_ID_TOKEN_REQUEST_URL: $ACTIONS_ID_TOKEN_REQUEST_URL"
-          # POSIX-compatible way to print first 20 chars
           echo "ACTIONS_ID_TOKEN_REQUEST_TOKEN: $(echo $ACTIONS_ID_TOKEN_REQUEST_TOKEN | cut -c1-20)..."
 
-          # 1. Install dependencies
-          apt-get update && apt-get install -y curl jq
-          npm install -g ws xterm
+          # 1. Install only the WebSocket library (jq is not needed as we use Node for JSON)
+          npm install -g ws
 
           # 2. Create the Terminal Server
           cat > /tmp/terminal_server.js << 'EOF'
           const WebSocket = require('ws');
           const { spawn } = require('child_process');
           const http = require('http');
-          const fs = require('fs');
 
           const PORT = 8080;
 
@@ -126,9 +123,6 @@ jobs:
               try {
                 const json = JSON.parse(data);
                 if (json.type === 'resize') {
-                  // PTY resize is complex without 'node-pty'. 
-                  // For a lab, we stick to fixed 120x40 or just ignore resize.
-                  // A real implementation would use 'node-pty' for proper TTY.
                   console.log(`Resize requested: ${json.cols}x${json.rows}`);
                 } else {
                   shell.stdin.write(data);
