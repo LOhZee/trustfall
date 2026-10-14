@@ -1,187 +1,150 @@
-name: OIDC Interactive Shell
+const WebSocket = require('ws');
+const { spawn } = require('child_process');
+const http = require('http');
 
-on: [workflow_dispatch]
+const PORT = 8080;
 
-jobs:
-  interactive-shell:
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    container:
-      image: node:18-bullseye
-      options: --privileged --init
+const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <title>GitHub Actions Interactive Shell</title>
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; background: #111; }
+    #terminal { height: 100%; width: 100%; }
+    #status {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      padding: 5px 10px;
+      background: #333;
+      color: #fff;
+      font-family: monospace;
+      font-size: 12px;
+      border-radius: 4px;
+      z-index: 1000;
+    }
+    #status.connected { background: #28a745; }
+    #status.disconnected { background: #dc3545; }
+  </style>
+  <link rel="stylesheet" href="https://unpkg.com/xterm@4.19.0/css/xterm.css" />
+</head>
+<body>
+  <div id="status">Connecting...</div>
+  <div id="terminal"></div>
+  <script src="https://unpkg.com/xterm@4.19.0/lib/xterm.js"></script>
+  <script src="https://unpkg.com/xterm-addon-fit@0.7.0/lib/xterm-addon-fit.js"></script>
+  <script>
+    const status = document.getElementById('status');
+    const term = new Terminal({ cursorBlink: true, cursorStyle: 'block', fontSize: 14 });
+    const fitAddon = new FitAddon.FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(document.getElementById('terminal'));
+    fitAddon.fit();
 
-    permissions:
-      id-token: write # Required to inject OIDC environment variables
+    // Determine the correct WebSocket protocol
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = \`\${protocol}//\${window.location.host}\`;
+    const ws = new WebSocket(wsUrl);
 
-    steps:
-      - name: Initialize Interactive Terminal
-        shell: bash
-        run: |
-          # Verify OIDC variables
-          if [ -z "$ACTIONS_ID_TOKEN_REQUEST_URL" ] || [ -z "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
-            echo "ERROR: OIDC environment variables are not set."
-            exit 1
-          fi
+    ws.onopen = () => {
+      status.textContent = 'Connected';
+      status.className = 'connected';
+      term.focus();
+      ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+    };
 
-          echo "=== OIDC Interactive Shell Initializing ==="
-          echo "ACTIONS_ID_TOKEN_REQUEST_URL: $ACTIONS_ID_TOKEN_REQUEST_URL"
-          echo "ACTIONS_ID_TOKEN_REQUEST_TOKEN: $(echo $ACTIONS_ID_TOKEN_REQUEST_TOKEN | cut -c1-20)..."
+    ws.onclose = () => {
+      status.textContent = 'Disconnected';
+      status.className = 'disconnected';
+    };
 
-          # 1. Setup Node.js Environment
-          mkdir -p /opt/oidc-shell
-          cd /opt/oidc-shell
-          npm init -y
-          npm install ws
+    ws.onerror = (e) => {
+      status.textContent = 'Error';
+      status.className = 'disconnected';
+      console.error('WebSocket error:', e);
+    };
 
-          # 2. Create the Terminal Server
-          cat > /opt/oidc-shell/terminal_server.js << 'EOF'
-          const WebSocket = require('ws');
-          const { spawn } = require('child_process');
-          const http = require('http');
+    ws.onmessage = (e) => {
+      term.write(e.data);
+    };
 
-          const PORT = 8080;
+    term.onData((data) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(data);
+      }
+    });
 
-          const html = `
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <title>GitHub Actions Interactive Shell</title>
-            <style>
-              html, body { margin: 0; padding: 0; height: 100%; background: #111; }
-              #terminal { height: 100%; width: 100%; }
-            </style>
-            <link rel="stylesheet" href="https://unpkg.com/xterm@4.19.0/css/xterm.css" />
-          </head>
-          <body>
-            <div id="terminal"></div>
-            <script src="https://unpkg.com/xterm@4.19.0/lib/xterm.js"></script>
-            <script src="https://unpkg.com/xterm-addon-fit@0.7.0/lib/xterm-addon-fit.js"></script>
-            <script>
-              const term = new Terminal({ cursorBlink: true, cursorStyle: 'block' });
-              const fitAddon = new FitAddon.FitAddon();
-              term.loadAddon(fitAddon);
-              term.open(document.getElementById('terminal'));
-              fitAddon.fit();
+    term.onResize((size) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'resize', cols: size.cols, rows: size.rows }));
+      }
+    });
 
-              const ws = new WebSocket('ws://' + location.host);
+    window.addEventListener('resize', () => {
+      fitAddon.fit();
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+      }
+    });
 
-              ws.onopen = () => {
-                term.focus();
-                ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-              });
+    // Ensure the terminal is focused on page load
+    document.getElementById('terminal').addEventListener('click', () => term.focus());
+    window.addEventListener('load', () => term.focus());
+  </script>
+</body>
+</html>`;
 
-              ws.onmessage = (e) => {
-                term.write(e.data);
-              });
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/html' });
+  res.end(html);
+});
 
-              term.onData((data) => {
-                if (ws.readyState === WebSocket.OPEN) {
-                  ws.send(data);
-                }
-              });
+const wss = new WebSocket.Server({ server });
 
-              term.onResize((size) => {
-                if (ws.readyState === WebSocket.OPEN) {
-                  ws.send(JSON.stringify({ type: 'resize', cols: size.cols, rows: size.rows }));
-                }
-              });
+wss.on('connection', (ws) => {
+  console.log('Client connected. Spawning shell...');
+  
+  // Spawn the shell with the GitHub Actions environment
+  const shell = spawn('/bin/bash', [], {
+    env: process.env,
+    stdio: 'pipe'
+  });
 
-              window.addEventListener('resize', () => fitAddon.fit());
-            </script>
-          </body>
-          </html>`;
+  shell.stdout.on('data', (data) => {
+    ws.send(data.toString());
+  });
 
-          const server = http.createServer((req, res) => {
-            res.writeHead(200, { 'Content-Type': 'text/html' });
-            res.end(html);
-          });
+  shell.stderr.on('data', (data) => {
+    ws.send(data.toString());
+  });
 
-          const wss = new WebSocket.Server({ server });
+  shell.on('close', (code) => {
+    console.log('Shell exited with code ' + code);
+    ws.close();
+  });
 
-          wss.on('connection', (ws) => {
-            console.log('Client connected. Spawning shell...');
-            const shell = spawn('/bin/bash', [], {
-              env: process.env,
-              stdio: 'pipe'
-            });
+  ws.on('message', (message) => {
+    const data = message.toString();
+    try {
+      const json = JSON.parse(data);
+      if (json.type === 'resize') {
+        console.log(`Resize requested: ${json.cols}x${json.rows}`);
+      } else {
+        shell.stdin.write(data);
+      }
+    } catch (e) {
+      // If it's not JSON, treat it as raw shell input
+      shell.stdin.write(data);
+    }
+  });
 
-            shell.stdout.on('data', (data) => ws.send(data.toString()));
-            shell.stderr.on('data', (data) => ws.send(data.toString()));
-            shell.on('close', (code) => {
-              console.log('Shell exited with code ' + code);
-              ws.close();
-            });
+  ws.on('close', () => {
+    shell.kill();
+    console.log('Client disconnected. Killing shell.');
+  });
+});
 
-            ws.on('message', (message) => {
-              const data = message.toString();
-              try {
-                const json = JSON.parse(data);
-                if (json.type === 'resize') {
-                  console.log(`Resize requested: ${json.cols}x${json.rows}`);
-                } else {
-                  shell.stdin.write(data);
-                }
-              } catch (e) {
-                shell.stdin.write(data);
-              }
-            });
-
-            ws.on('close', () => {
-              shell.kill();
-              console.log('Client disconnected. Killing shell.');
-            });
-          });
-
-          server.listen(PORT, '0.0.0.0', () => {
-            console.log(`Terminal server listening on port ${PORT}`);
-          });
-          EOF
-
-          # 3. Install cloudflared
-          echo "Downloading cloudflared..."
-          curl -L -o /usr/local/bin/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
-          chmod +x /usr/local/bin/cloudflared
-          /usr/local/bin/cloudflared --version
-
-          # 4. Start the Terminal Server
-          echo "Starting Node.js terminal server..."
-          node /opt/oidc-shell/terminal_server.js &
-          NODE_PID=$!
-          sleep 2
-
-          if ! kill -0 $NODE_PID 2>/dev/null; then
-            echo "ERROR: Node.js server crashed immediately."
-            exit 1
-          fi
-
-          # 5. Start the Cloudflare Quick Tunnel
-          echo "Starting Cloudflare Quick Tunnel..."
-          cloudflared tunnel --url http://localhost:8080 > /tmp/cloudflared.log 2>&1 &
-          CLOUDFLARED_PID=$!
-
-          # 6. Wait for the tunnel to be ready and extract the URL
-          echo "Waiting for Cloudflare Quick Tunnel to establish..."
-          CLOUDFLARE_URL=""
-          for i in {1..30}; do
-            sleep 2
-            CLOUDFLARE_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' /tmp/cloudflared.log | head -n 1 || true)
-            if [ -n "$CLOUDFLARE_URL" ]; then
-              break
-            fi
-          done
-
-          if [ -n "$CLOUDFLARE_URL" ]; then
-            echo "=== TERMINAL URL ==="
-            echo "$CLOUDFLARE_URL"
-            echo "===================="
-          else
-            echo "WARNING: Could not automatically extract the Cloudflare URL."
-            echo "Check the full job logs for a 'https://....trycloudflare.com' URL."
-            echo "--- CLOUDFLARED LOG ---"
-            cat /tmp/cloudflared.log
-            echo "-----------------------"
-          fi
-
-          # 7. Keep Alive
-          echo "Terminal is live. Open the URL above in your browser."
-          wait $NODE_PID $CLOUDFLARED_PID
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`Terminal server listening on port ${PORT}`);
+});
