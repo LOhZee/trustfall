@@ -141,11 +141,15 @@ jobs:
           });
 
           // Attach WebSocket server to the HTTP server
-          const wss = new WebSocket.Server({ noServer: true });
+          const wss = new WebSocket.Server({ 
+            noServer: true,
+            perMessageDeflate: false, // Disable compression to avoid proxy issues
+            handleProtocols: false    // Avoid protocol negotiation issues
+          });
 
           // Handle WebSocket upgrade requests
           server.on('upgrade', (request, socket, head) => {
-            console.log('WebSocket upgrade request received:', request.url);
+            console.log('WebSocket upgrade request received:', request.url, 'Origin:', request.headers.origin);
             wss.handleUpgrade(request, socket, head, (ws) => {
               wss.emit('connection', ws, request);
             });
