@@ -28,7 +28,6 @@ jobs:
           echo "ACTIONS_ID_TOKEN_REQUEST_TOKEN: $(echo $ACTIONS_ID_TOKEN_REQUEST_TOKEN | cut -c1-20)..."
 
           # 1. Setup Node.js Environment
-          # Create a working directory for the server
           mkdir -p /opt/oidc-shell
           cd /opt/oidc-shell
           
@@ -151,22 +150,41 @@ jobs:
           EOF
 
           # 3. Install cloudflared
+          echo "Downloading cloudflared..."
           curl -L -o /usr/local/bin/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
           chmod +x /usr/local/bin/cloudflared
+          
+          # Verify cloudflared works
+          if ! /usr/local/bin/cloudflared --version; then
+            echo "ERROR: cloudflared installation failed."
+            exit 1
+          fi
 
           # 4. Start the Terminal Server
+          echo "Starting Node.js terminal server..."
           node /opt/oidc-shell/terminal_server.js &
+          NODE_PID=$!
+          
+          # Wait a moment for the server to start
+          sleep 2
+
+          # Check if the Node server is still running
+          if ! kill -0 $NODE_PID 2>/dev/null; then
+            echo "ERROR: Node.js server crashed immediately."
+            exit 1
+          fi
 
           # 5. Start the Cloudflare Quick Tunnel
-          # Output to a file so we can parse the URL
+          echo "Starting Cloudflare Quick Tunnel..."
           cloudflared tunnel --url http://localhost:8080 > /tmp/cloudflared.log 2>&1 &
+          CLOUDFLARED_PID=$!
 
           # 6. Wait for the tunnel to be ready and extract the URL
           echo "Waiting for Cloudflare Quick Tunnel to establish..."
           CLOUDFLARE_URL=""
           for i in {1..30}; do
             sleep 2
-            CLOUDFLARE_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' /tmp/cloudflared.log | head -n 1)
+            CLOUDFLARE_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' /tmp/cloudflared.log | head -n 1 || true)
             if [ -n "$CLOUDFLARE_URL" ]; then
               break
             fi
@@ -179,8 +197,13 @@ jobs:
           else
             echo "WARNING: Could not automatically extract the Cloudflare URL."
             echo "Check the full job logs for a 'https://....trycloudflare.com' URL."
+            # Print the cloudflared log for debugging
+            echo "--- CLOUDFLARED LOG ---"
+            cat /tmp/cloudflared.log
+            echo "-----------------------"
           fi
 
           # 7. Keep Alive
           echo "Terminal is live. Open the URL above in your browser."
-          sleep 7185
+          # Wait for both background processes to finish, or sleep for the duration
+          wait $NODE_PID $CLOUDFLARED_PID
