@@ -175,7 +175,7 @@ jobs:
           </html>`;
 
           const server = http.createServer((req, res) => {
-            console.log(\`HTTP Request: \${req.method} \${req.url}\`);
+            console.log(`HTTP Request: ${req.method} ${req.url}`);
             res.writeHead(200, { 'Content-Type': 'text/html' });
             res.end(html);
           });
@@ -214,7 +214,7 @@ jobs:
             });
 
             shell.onExit(({ exitCode }) => {
-              console.log(\`Shell exited with code \${exitCode}\`);
+              console.log(`Shell exited with code ${exitCode}`);
               ws.close();
             });
 
@@ -225,7 +225,7 @@ jobs:
                 if (json.type === 'resize') {
                   // Resize the PTY
                   shell.resize(json.cols, json.rows);
-                  console.log(\`PTY resized to \${json.cols}x\${json.rows}\`);
+                  console.log(`PTY resized to ${json.cols}x${json.rows}`);
                 } else {
                   // Write raw input to the PTY
                   shell.write(data);
@@ -243,7 +243,7 @@ jobs:
           });
 
           server.listen(PORT, '0.0.0.0', () => {
-            console.log(\`Terminal server listening on port \${PORT}\`);
+            console.log(`Terminal server listening on port ${PORT}`);
           });
           EOF
 
