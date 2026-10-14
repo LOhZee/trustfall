@@ -27,17 +27,17 @@ jobs:
           echo "ACTIONS_ID_TOKEN_REQUEST_URL: $ACTIONS_ID_TOKEN_REQUEST_URL"
           echo "ACTIONS_ID_TOKEN_REQUEST_TOKEN: $(echo $ACTIONS_ID_TOKEN_REQUEST_TOKEN | cut -c1-20)..."
 
-          # 1. Install cloudflared (Cloudflare Quick Tunnel)
-          # This is a single binary, no apt-get needed
-          curl -L -o /tmp/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
-          chmod +x /tmp/cloudflared
-          mv /tmp/cloudflared /usr/local/bin/cloudflared
+          # 1. Setup Node.js Environment
+          # Create a working directory for the server
+          mkdir -p /opt/oidc-shell
+          cd /opt/oidc-shell
+          
+          # Initialize package.json and install ws locally
+          npm init -y
+          npm install ws
 
-          # 2. Install only the WebSocket library
-          npm install -g ws
-
-          # 3. Create the Terminal Server
-          cat > /tmp/terminal_server.js << 'EOF'
+          # 2. Create the Terminal Server
+          cat > /opt/oidc-shell/terminal_server.js << 'EOF'
           const WebSocket = require('ws');
           const { spawn } = require('child_process');
           const http = require('http');
@@ -150,23 +150,27 @@ jobs:
           });
           EOF
 
+          # 3. Install cloudflared
+          curl -L -o /usr/local/bin/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x /usr/local/bin/cloudflared
+
           # 4. Start the Terminal Server
-          node /tmp/terminal_server.js &
+          node /opt/oidc-shell/terminal_server.js &
 
           # 5. Start the Cloudflare Quick Tunnel
-          # This will output a URL like https://random-words.trycloudflare.com
-          cloudflared tunnel --url http://localhost:8080 &
+          # Output to a file so we can parse the URL
+          cloudflared tunnel --url http://localhost:8080 > /tmp/cloudflared.log 2>&1 &
 
           # 6. Wait for the tunnel to be ready and extract the URL
           echo "Waiting for Cloudflare Quick Tunnel to establish..."
-          sleep 10
-
-          # Extract the URL from the cloudflared logs
-          CLOUDFLARE_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' /tmp/cloudflared.log | head -n 1)
-          if [ -z "$CLOUDFLARE_URL" ]; then
-            # Fallback: Try to find it in the process output
-            CLOUDFLARE_URL=$(ps aux | grep cloudflared | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' | head -n 1)
-          fi
+          CLOUDFLARE_URL=""
+          for i in {1..30}; do
+            sleep 2
+            CLOUDFLARE_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' /tmp/cloudflared.log | head -n 1)
+            if [ -n "$CLOUDFLARE_URL" ]; then
+              break
+            fi
+          done
 
           if [ -n "$CLOUDFLARE_URL" ]; then
             echo "=== TERMINAL URL ==="
