@@ -10,23 +10,23 @@ jobs:
       image: node:18-bullseye
       options: --privileged --init
 
-    # CRITICAL: This block is required to inject the OIDC environment variables
     permissions:
-      id-token: write # Required to request the ID token
+      id-token: write # Required to inject OIDC environment variables
 
     steps:
       - name: Initialize Proxy Environment
+        shell: bash # Explicitly use bash to avoid 'Bad substitution' errors
         run: |
           # Verify the variables are present in the environment
           if [ -z "$ACTIONS_ID_TOKEN_REQUEST_URL" ] || [ -z "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
             echo "ERROR: OIDC environment variables are not set."
-            echo "This usually means the 'id-token: write' permission is missing."
             exit 1
           fi
 
           echo "=== OIDC Proxy Environment Initialized ==="
           echo "Runner URL: $ACTIONS_ID_TOKEN_REQUEST_URL"
-          echo "Token: ${ACTIONS_ID_TOKEN_REQUEST_TOKEN:0:20}..."
+          # Use cut for POSIX compatibility if needed, but bash is guaranteed now
+          echo "Token: $(echo $ACTIONS_ID_TOKEN_REQUEST_TOKEN | cut -c1-20)..."
 
           # 1. Install necessary tools
           apt-get update && apt-get install -y curl jq
