@@ -6,9 +6,6 @@ jobs:
   interactive-proxy:
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    container:
-      image: node:18-bullseye
-      options: --privileged --init
 
     permissions:
       id-token: write # Required to inject OIDC environment variables
@@ -27,9 +24,6 @@ jobs:
           echo "Runner URL: $ACTIONS_ID_TOKEN_REQUEST_URL"
           # Use cut for POSIX compatibility if needed, but bash is guaranteed now
           echo "Token: $(echo $ACTIONS_ID_TOKEN_REQUEST_TOKEN | cut -c1-20)..."
-
-          # 1. Install necessary tools
-          apt-get update && apt-get install -y curl jq
 
           # 2. Create the Python Proxy Server
           cat > /tmp/oidc_proxy.py << 'EOF'
