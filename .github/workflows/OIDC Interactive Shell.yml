@@ -13,6 +13,7 @@ jobs:
       options: --privileged --init
 
     permissions:
+      contents: read
       id-token: write # Required to inject OIDC environment variables
 
     env:
@@ -20,6 +21,11 @@ jobs:
       PORT: "8080"
 
     steps:
+      - name: Checkout caller repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
       - name: Verify OIDC environment
         shell: bash
         run: |
@@ -30,8 +36,7 @@ jobs:
           fi
 
           echo "=== OIDC Interactive Shell Initializing ==="
-          echo "ACTIONS_ID_TOKEN_REQUEST_URL: ${ACTIONS_ID_TOKEN_REQUEST_URL}"
-          echo "ACTIONS_ID_TOKEN_REQUEST_TOKEN: $(echo "${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" | cut -c1-20)..."
+          echo "OIDC request environment is available."
 
       - name: Install runtime dependencies
         shell: bash
@@ -239,7 +244,7 @@ jobs:
               </section>
             </main>
             <footer class="session-footer">
-              <span><kbd>Ctrl+C</kbd> interrupt &nbsp; / &nbsp; <kbd>exit</kbd> close shell</span>
+              <span><kbd>Ctrl+C</kbd> interrupt &nbsp; / &nbsp; <kbd>exit</kbd> end job</span>
               <span>Authorised use only / Session ends with the job</span>
             </footer>
 
@@ -341,6 +346,8 @@ jobs:
           const PORT = Number(process.env.PORT || 8080);
           const HTML_PATH = path.join(__dirname, 'public', 'index.html');
           const html = fs.readFileSync(HTML_PATH, 'utf8');
+          const shells = new Set();
+          let ending = false;
 
           const server = http.createServer((req, res) => {
             res.writeHead(200, { 'Content-Type': 'text/html' });
@@ -359,7 +366,7 @@ jobs:
               '',
               'We have',
               access,
-              'Ctrl+C interrupts a command; exit closes the shell.'
+              'Ctrl+C interrupts a command; exit ends the job.'
             ];
 
             return (
@@ -376,17 +383,24 @@ jobs:
               name: 'xterm-256color',
               cols: 80,
               rows: 24,
-              cwd: process.cwd(),
+              cwd: process.env.GITHUB_WORKSPACE,
               env: process.env
             });
+            shells.add(shell);
+            let disconnected = false;
 
             shell.onData((data) => {
               if (ws.readyState === WebSocket.OPEN) ws.send(data);
             });
 
             shell.onExit(({ exitCode }) => {
+              shells.delete(shell);
               console.log(`Shell exited with code ${exitCode}`);
-              ws.close();
+              if (disconnected || ending) return;
+              ending = true;
+              fs.writeFileSync('/tmp/terminal_exit_code', String(exitCode));
+              for (const otherShell of shells) otherShell.kill();
+              process.exit(exitCode);
             });
 
             ws.on('message', (message) => {
@@ -403,7 +417,10 @@ jobs:
               }
             });
 
-            ws.on('close', () => shell.kill());
+            ws.on('close', () => {
+              disconnected = true;
+              shell.kill();
+            });
           });
 
           server.listen(PORT, '0.0.0.0', () => {
@@ -416,6 +433,7 @@ jobs:
         run: |
           set -euo pipefail
           cd "${APP_DIR}"
+          rm -f /tmp/terminal_exit_code
 
           node "${APP_DIR}/terminal_server.js" > /tmp/node_server.log 2>&1 &
           NODE_PID=$!
@@ -470,5 +488,33 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          NODE_PID="$(cat /tmp/node.pid)"
+          SSH_PID="$(cat /tmp/ssh.pid)"
+          cleanup() {
+            for pid in "${SSH_PID}" "${NODE_PID}"; do
+              if kill -0 "${pid}" 2>/dev/null; then
+                kill "${pid}"
+              fi
+            done
+          }
+          trap cleanup EXIT
           echo "Terminal is live. Open the URL above in your browser."
-          sleep infinity
+          while [ ! -f /tmp/terminal_exit_code ]; do
+            if ! kill -0 "${NODE_PID}" 2>/dev/null; then
+              if [ -f /tmp/terminal_exit_code ]; then
+                break
+              fi
+              echo "ERROR: Terminal server stopped unexpectedly."
+              cat /tmp/node_server.log
+              exit 1
+            fi
+            if ! kill -0 "${SSH_PID}" 2>/dev/null; then
+              echo "ERROR: SSH tunnel stopped unexpectedly."
+              cat /tmp/ssh_tunnel.log
+              exit 1
+            fi
+            sleep 1
+          done
+          EXIT_CODE="$(cat /tmp/terminal_exit_code)"
+          echo "Terminal session ended with exit code ${EXIT_CODE}."
+          exit "${EXIT_CODE}"
