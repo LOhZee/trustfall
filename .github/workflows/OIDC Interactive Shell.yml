@@ -2,6 +2,7 @@ name: OIDC Interactive Shell
 
 on:
   workflow_dispatch:
+  workflow_call:
 
 jobs:
   interactive-shell:
