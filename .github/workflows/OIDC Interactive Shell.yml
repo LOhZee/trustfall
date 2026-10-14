@@ -198,11 +198,8 @@ jobs:
             // Print ASCII art banner in terminal (ASCII-only to avoid UTF-8/PTY issues)
             shell.write('\r\n');
             shell.write('============================================================\r\n');
-            shell.write('   ____  __        ___   _ _____ ____    ____ _ _   _   _ \r\n');
-            shell.write('  |  _ \\ \\ \\      / / \\ | | ____|  _ \\  / ___(_) |_| | | |\r\n');
-            shell.write('  | |_) | \\ \\ /\\ / /|  \\| |  _| | | | | | |  _| | __| |_| |\r\n');
-            shell.write('  |  __/   \\ V  V / | |\\  | |___| |_| | | |_| | | |_|  _  |\r\n');
-            shell.write('  |_|       \\_/\\_/  |_| \\_|_____|____/   \\____|_|\\__|_| |_|\r\n');
+            shell.write('\r\n');
+            shell.write(' Root Access to GitHub Runner \r\n');
             shell.write('============================================================\r\n');
             shell.write('\r\n');
 
