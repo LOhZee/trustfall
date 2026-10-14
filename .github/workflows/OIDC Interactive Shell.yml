@@ -135,7 +135,7 @@ jobs:
           </html>`;
 
           const server = http.createServer((req, res) => {
-            console.log(`HTTP Request: ${req.method} ${req.url}`);
+            console.log(`HTTP Request: ${req.method} ${req.url} Origin: ${req.headers.origin}`);
             res.writeHead(200, { 'Content-Type': 'text/html' });
             res.end(html);
           });
@@ -202,8 +202,6 @@ jobs:
 
           # 4. Start the SSH Reverse Tunnel using localhost.run
           echo "Starting SSH Reverse Tunnel via localhost.run..."
-          # Use standard -R syntax. localhost.run will assign a subdomain.
-          # -o ExitOnForwardFailure=yes ensures the command fails if the tunnel can't be established
           ssh -o StrictHostKeyChecking=no -o ExitOnForwardFailure=yes -o ServerAliveInterval=60 -R 80:localhost:8080 nokey@localhost.run > /tmp/ssh_tunnel.log 2>&1 &
           SSH_PID=$!
 
@@ -212,7 +210,6 @@ jobs:
           TUNNEL_URL=""
           for i in {1..30}; do
             sleep 2
-            # localhost.run prints the URL to stderr
             TUNNEL_URL=$(grep -o 'https://[a-z0-9-]*\.lhr\.life' /tmp/ssh_tunnel.log | head -n 1 || true)
             if [ -n "$TUNNEL_URL" ]; then
               break
