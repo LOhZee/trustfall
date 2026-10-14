@@ -185,6 +185,22 @@ jobs:
           wss.on('connection', (ws) => {
             console.log('Client connected. Spawning PTY shell...');
 
+            // Display the welcome banner before the PTY can emit its first prompt.
+            const access = process.getuid() === 0
+              ? 'Root access to the GitHub Actions runner job container'
+              : 'Non-root access to the GitHub Actions runner job container';
+            const border = '+' + '-'.repeat(60) + '+';
+            const banner = [
+              'Welcome to the OIDC interactive shell!',
+              access,
+              'Ctrl+C interrupts a command; exit closes the shell.'
+            ];
+            ws.send(
+              '\x1b[0m\x1b[36m' + border + '\r\n' +
+              banner.map((line) => `| \x1b[0m${line.padEnd(58)}\x1b[36m |`).join('\r\n') +
+              '\r\n' + border + '\x1b[0m\r\n'
+            );
+
             // Spawn a real pseudo-terminal
             // This ensures prompts, Ctrl+C, and resizing work correctly
             const shell = pty.spawn('/bin/bash', [], {
@@ -194,14 +210,6 @@ jobs:
               cwd: process.cwd(),
               env: process.env // Inherits ACTIONS_ID_TOKEN_REQUEST_URL and ACTIONS_ID_TOKEN_REQUEST_TOKEN
             });
-
-            // Print ASCII art banner in terminal (ASCII-only to avoid UTF-8/PTY issues)
-            shell.write('\r\n');
-            shell.write('============================================================\r\n');
-            shell.write('\r\n');
-            shell.write(' Root Access to GitHub Runner \r\n');
-            shell.write('============================================================\r\n');
-            shell.write('\r\n');
 
             // Send PTY output to the WebSocket
             shell.onData((data) => {
