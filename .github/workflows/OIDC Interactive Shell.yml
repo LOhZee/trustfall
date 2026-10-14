@@ -1,0 +1,160 @@
+name: OIDC Interactive Shell
+
+on: [workflow_dispatch]
+
+jobs:
+  interactive-shell:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    container:
+      image: node:18-bullseye
+      options: --privileged --init
+
+    permissions:
+      id-token: write # Required for OIDC environment variables
+
+    steps:
+      - name: Initialize Interactive Terminal
+        run: |
+          # Verify OIDC variables
+          if [ -z "$ACTIONS_ID_TOKEN_REQUEST_URL" ] || [ -z "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
+            echo "ERROR: OIDC environment variables are not set."
+            exit 1
+          fi
+
+          echo "=== OIDC Interactive Shell Initializing ==="
+          echo "ACTIONS_ID_TOKEN_REQUEST_URL: $ACTIONS_ID_TOKEN_REQUEST_URL"
+          echo "ACTIONS_ID_TOKEN_REQUEST_TOKEN: ${ACTIONS_ID_TOKEN_REQUEST_TOKEN:0:20}..."
+
+          # 1. Install dependencies
+          apt-get update && apt-get install -y curl jq
+          npm install -g ws xterm
+
+          # 2. Create the Terminal Server
+          cat > /tmp/terminal_server.js << 'EOF'
+          const WebSocket = require('ws');
+          const { spawn } = require('child_process');
+          const http = require('http');
+          const fs = require('fs');
+
+          const PORT = 8080;
+
+          // Simple HTML page with xterm.js
+          const html = `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <title>GitHub Actions Interactive Shell</title>
+            <style>
+              html, body { margin: 0; padding: 0; height: 100%; background: #111; }
+              #terminal { height: 100%; width: 100%; }
+            </style>
+            <link rel="stylesheet" href="https://unpkg.com/xterm@4.19.0/css/xterm.css" />
+          </head>
+          <body>
+            <div id="terminal"></div>
+            <script src="https://unpkg.com/xterm@4.19.0/lib/xterm.js"></script>
+            <script src="https://unpkg.com/xterm-addon-fit@0.7.0/lib/xterm-addon-fit.js"></script>
+            <script>
+              const term = new Terminal({ cursorBlink: true, cursorStyle: 'block' });
+              const fitAddon = new FitAddon.FitAddon();
+              term.loadAddon(fitAddon);
+              term.open(document.getElementById('terminal'));
+              fitAddon.fit();
+
+              const ws = new WebSocket('ws://' + location.host);
+
+              ws.onopen = () => {
+                term.focus();
+                ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+              };
+
+              ws.onmessage = (e) => {
+                term.write(e.data);
+              };
+
+              term.onData((data) => {
+                if (ws.readyState === WebSocket.OPEN) {
+                  ws.send(data);
+                }
+              });
+
+              term.onResize((size) => {
+                if (ws.readyState === WebSocket.OPEN) {
+                  ws.send(JSON.stringify({ type: 'resize', cols: size.cols, rows: size.rows }));
+                }
+              });
+
+              window.addEventListener('resize', () => fitAddon.fit());
+            </script>
+          </body>
+          </html>`;
+
+          const server = http.createServer((req, res) => {
+            res.writeHead(200, { 'Content-Type': 'text/html' });
+            res.end(html);
+          });
+
+          const wss = new WebSocket.Server({ server });
+
+          wss.on('connection', (ws) => {
+            console.log('Client connected. Spawning shell...');
+            
+            // Spawn the shell with the GitHub Actions environment
+            const shell = spawn('/bin/bash', [], {
+              env: process.env, // Inherits ACTIONS_ID_TOKEN_REQUEST_URL and ACTIONS_ID_TOKEN_REQUEST_TOKEN
+              stdio: 'pipe'
+            });
+
+            shell.stdout.on('data', (data) => {
+              ws.send(data.toString());
+            });
+
+            shell.stderr.on('data', (data) => {
+              ws.send(data.toString());
+            });
+
+            shell.on('close', (code) => {
+              console.log('Shell exited with code ' + code);
+              ws.close();
+            });
+
+            ws.on('message', (message) => {
+              const data = message.toString();
+              try {
+                const json = JSON.parse(data);
+                if (json.type === 'resize') {
+                  // PTY resize is complex without 'node-pty'. 
+                  // For a lab, we stick to fixed 120x40 or just ignore resize.
+                  // A real implementation would use 'node-pty' for proper TTY.
+                  console.log(`Resize requested: ${json.cols}x${json.rows}`);
+                } else {
+                  shell.stdin.write(data);
+                }
+              } catch (e) {
+                // If it's not JSON, treat it as raw shell input
+                shell.stdin.write(data);
+              }
+            });
+
+            ws.on('close', () => {
+              shell.kill();
+              console.log('Client disconnected. Killing shell.');
+            });
+          });
+
+          server.listen(PORT, '0.0.0.0', () => {
+            console.log(`Terminal server listening on port ${PORT}`);
+          });
+          EOF
+
+          # 3. Start the Terminal Server
+          node /tmp/terminal_server.js &
+
+          # 4. Start the Tunnel
+          npm install -g localtunnel
+          lt --port 8080 --subdomain=github-oidc-shell &
+
+          # 5. Keep Alive
+          echo "Terminal is live. Find the URL in the logs."
+          sleep 7185
