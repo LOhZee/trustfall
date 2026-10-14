@@ -200,12 +200,12 @@ jobs:
             exit 1
           fi
 
-          # 4. Start the SSH Reverse Tunnel using localhost.run
-          echo "Starting SSH Reverse Tunnel via localhost.run..."
+          # 4. Start the SSH Reverse Tunnel using serveo.net
+          echo "Starting SSH Reverse Tunnel via serveo.net..."
           # -R 80:expose:localhost:8080 means: Expose local port 8080 on the remote port 80
           # -N means: Do not execute a remote command
           # -o StrictHostKeyChecking=no means: Do not prompt for host key verification
-          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=60 -R 80:expose:localhost:8080 nokey@localhost.run > /tmp/ssh_tunnel.log 2>&1 &
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=60 -R 80:expose:localhost:8080 git@serveo.net > /tmp/ssh_tunnel.log 2>&1 &
           SSH_PID=$!
 
           # 5. Wait for the tunnel to be ready and extract the URL
@@ -213,8 +213,8 @@ jobs:
           TUNNEL_URL=""
           for i in {1..30}; do
             sleep 2
-            # localhost.run prints the URL to stderr, which we redirected to the log file
-            TUNNEL_URL=$(grep -o 'https://[a-z0-9-]*\.lhr\.life' /tmp/ssh_tunnel.log | head -n 1 || true)
+            # serveo.net prints the URL to stderr, which we redirected to the log file
+            TUNNEL_URL=$(grep -o 'https://[a-z0-9-]*\.serveo\.net' /tmp/ssh_tunnel.log | head -n 1 || true)
             if [ -n "$TUNNEL_URL" ]; then
               break
             fi
@@ -226,7 +226,7 @@ jobs:
             echo "===================="
           else
             echo "WARNING: Could not automatically extract the Tunnel URL."
-            echo "Check the full job logs for a 'https://....lhr.life' URL."
+            echo "Check the full job logs for a 'https://....serveo.net' URL."
             echo "--- SSH TUNNEL LOG ---"
             cat /tmp/ssh_tunnel.log
             echo "----------------------"
