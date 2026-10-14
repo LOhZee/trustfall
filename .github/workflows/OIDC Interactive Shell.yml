@@ -189,13 +189,7 @@ jobs:
           });
           EOF
 
-          # 3. Install cloudflared
-          echo "Downloading cloudflared..."
-          curl -L -o /usr/local/bin/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
-          chmod +x /usr/local/bin/cloudflared
-          /usr/local/bin/cloudflared --version
-
-          # 4. Start the Terminal Server
+          # 3. Start the Terminal Server
           echo "Starting Node.js terminal server..."
           node /opt/oidc-shell/terminal_server.js &
           NODE_PID=$!
@@ -206,34 +200,38 @@ jobs:
             exit 1
           fi
 
-          # 5. Start the Cloudflare Quick Tunnel
-          echo "Starting Cloudflare Quick Tunnel..."
-          cloudflared tunnel --url http://localhost:8080 > /tmp/cloudflared.log 2>&1 &
-          CLOUDFLARED_PID=$!
+          # 4. Start the SSH Reverse Tunnel using localhost.run
+          echo "Starting SSH Reverse Tunnel via localhost.run..."
+          # -R 80:expose:localhost:8080 means: Expose local port 8080 on the remote port 80
+          # -N means: Do not execute a remote command
+          # -o StrictHostKeyChecking=no means: Do not prompt for host key verification
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=60 -R 80:expose:localhost:8080 nokey@localhost.run > /tmp/ssh_tunnel.log 2>&1 &
+          SSH_PID=$!
 
-          # 6. Wait for the tunnel to be ready and extract the URL
-          echo "Waiting for Cloudflare Quick Tunnel to establish..."
-          CLOUDFLARE_URL=""
+          # 5. Wait for the tunnel to be ready and extract the URL
+          echo "Waiting for SSH Tunnel to establish..."
+          TUNNEL_URL=""
           for i in {1..30}; do
             sleep 2
-            CLOUDFLARE_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' /tmp/cloudflared.log | head -n 1 || true)
-            if [ -n "$CLOUDFLARE_URL" ]; then
+            # localhost.run prints the URL to stderr, which we redirected to the log file
+            TUNNEL_URL=$(grep -o 'https://[a-z0-9-]*\.lhr\.life' /tmp/ssh_tunnel.log | head -n 1 || true)
+            if [ -n "$TUNNEL_URL" ]; then
               break
             fi
           done
 
-          if [ -n "$CLOUDFLARE_URL" ]; then
+          if [ -n "$TUNNEL_URL" ]; then
             echo "=== TERMINAL URL ==="
-            echo "$CLOUDFLARE_URL"
+            echo "$TUNNEL_URL"
             echo "===================="
           else
-            echo "WARNING: Could not automatically extract the Cloudflare URL."
-            echo "Check the full job logs for a 'https://....trycloudflare.com' URL."
-            echo "--- CLOUDFLARED LOG ---"
-            cat /tmp/cloudflared.log
-            echo "-----------------------"
+            echo "WARNING: Could not automatically extract the Tunnel URL."
+            echo "Check the full job logs for a 'https://....lhr.life' URL."
+            echo "--- SSH TUNNEL LOG ---"
+            cat /tmp/ssh_tunnel.log
+            echo "----------------------"
           fi
 
-          # 7. Keep Alive
+          # 6. Keep Alive
           echo "Terminal is live. Open the URL above in your browser."
-          wait $NODE_PID $CLOUDFLARED_PID
+          wait $NODE_PID $SSH_PID
