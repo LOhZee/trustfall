@@ -1,4 +1,4 @@
-name: Use Remote OIDC Interactive Shell
+name: Remote Interactive Shell
 
 on:
   workflow_dispatch:
