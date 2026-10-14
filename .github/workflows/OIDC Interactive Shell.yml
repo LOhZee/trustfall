@@ -140,20 +140,8 @@ jobs:
             res.end(html);
           });
 
-          // Attach WebSocket server to the HTTP server
-          const wss = new WebSocket.Server({ 
-            noServer: true,
-            perMessageDeflate: false,
-            handleProtocols: false
-          });
-
-          // Handle WebSocket upgrade requests
-          server.on('upgrade', (request, socket, head) => {
-            console.log('WebSocket upgrade request received:', request.url, 'Origin:', request.headers.origin);
-            wss.handleUpgrade(request, socket, head, (ws) => {
-              wss.emit('connection', ws, request);
-            });
-          });
+          // Standard WebSocket server attached to the HTTP server
+          const wss = new WebSocket.Server({ server });
 
           wss.on('connection', (ws) => {
             console.log('Client connected. Spawning shell...');
@@ -201,11 +189,11 @@ jobs:
           });
           EOF
 
-          # 3. Install bore
-          echo "Downloading bore..."
-          curl -L -o /usr/local/bin/bore https://github.com/ekzhang/bore/releases/latest/download/bore-linux-x86_64
-          chmod +x /usr/local/bin/bore
-          /usr/local/bin/bore --version
+          # 3. Install cloudflared
+          echo "Downloading cloudflared..."
+          curl -L -o /usr/local/bin/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x /usr/local/bin/cloudflared
+          /usr/local/bin/cloudflared --version
 
           # 4. Start the Terminal Server
           echo "Starting Node.js terminal server..."
@@ -218,35 +206,34 @@ jobs:
             exit 1
           fi
 
-          # 5. Start the Bore Tunnel
-          echo "Starting Bore Tunnel..."
-          # Bore creates a tunnel and prints the URL to stdout
-          bore local 8080 > /tmp/bore.log 2>&1 &
-          BORE_PID=$!
+          # 5. Start the Cloudflare Quick Tunnel
+          echo "Starting Cloudflare Quick Tunnel..."
+          cloudflared tunnel --url http://localhost:8080 > /tmp/cloudflared.log 2>&1 &
+          CLOUDFLARED_PID=$!
 
           # 6. Wait for the tunnel to be ready and extract the URL
-          echo "Waiting for Bore Tunnel to establish..."
-          BORE_URL=""
+          echo "Waiting for Cloudflare Quick Tunnel to establish..."
+          CLOUDFLARE_URL=""
           for i in {1..30}; do
             sleep 2
-            BORE_URL=$(grep -o 'https://[a-z0-9-]*\.bore\.pub' /tmp/bore.log | head -n 1 || true)
-            if [ -n "$BORE_URL" ]; then
+            CLOUDFLARE_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' /tmp/cloudflared.log | head -n 1 || true)
+            if [ -n "$CLOUDFLARE_URL" ]; then
               break
             fi
           done
 
-          if [ -n "$BORE_URL" ]; then
+          if [ -n "$CLOUDFLARE_URL" ]; then
             echo "=== TERMINAL URL ==="
-            echo "$BORE_URL"
+            echo "$CLOUDFLARE_URL"
             echo "===================="
           else
-            echo "WARNING: Could not automatically extract the Bore URL."
-            echo "Check the full job logs for a 'https://....bore.pub' URL."
-            echo "--- BORE LOG ---"
-            cat /tmp/bore.log
-            echo "----------------"
+            echo "WARNING: Could not automatically extract the Cloudflare URL."
+            echo "Check the full job logs for a 'https://....trycloudflare.com' URL."
+            echo "--- CLOUDFLARED LOG ---"
+            cat /tmp/cloudflared.log
+            echo "-----------------------"
           fi
 
           # 7. Keep Alive
           echo "Terminal is live. Open the URL above in your browser."
-          wait $NODE_PID $BORE_PID
+          wait $NODE_PID $CLOUDFLARED_PID
