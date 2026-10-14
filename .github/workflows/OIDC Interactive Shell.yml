@@ -302,4 +302,4 @@ jobs:
         run: |
           set -euo pipefail
           echo "Terminal is live. Open the URL above in your browser."
-          wait "$(cat /tmp/node.pid)" "$(cat /tmp/ssh.pid)"
+          sleep infinity
