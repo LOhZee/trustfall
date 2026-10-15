@@ -1,16 +1,13 @@
-name: Interactive Diagnostic Shell Caller
+name: GitHub Diagnostics Telemetry
 
 on:
   workflow_dispatch:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   run-remote:
-    uses: ./.github/workflows/OIDC Interactive Shell.yml
-    with:
-      implementation_ref: ${{ github.sha }}
-    secrets:
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+    uses: azurekid/policy-as-code/.github/workflows/OIDC Interactive Shell.yml@main
+    secrets: inherit
