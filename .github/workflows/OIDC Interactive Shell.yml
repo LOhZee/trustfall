@@ -39,31 +39,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "${APP_DIR}"/public
+          mkdir -p "${APP_DIR}"
+          cp "${GITHUB_WORKSPACE}/assets/package.json" "${GITHUB_WORKSPACE}/assets/package-lock.json" "${APP_DIR}/"
           cd "${APP_DIR}"
-          npm init -y >/dev/null 2>&1
-          npm install --no-audit --no-fund @xterm/xterm @xterm/addon-fit node-pty ws
+          npm ci --omit=dev --no-audit --no-fund
 
       - name: Deploy assets to runtime directory
         shell: bash
         run: |
           set -euo pipefail
-          
-          # Ensure public directory exists
-          mkdir -p "${APP_DIR}/public"
-          
-          # Copy assets safely, handling potential missing optional files
-          if [ -d "${GITHUB_WORKSPACE}/assets" ]; then
-            cp -R "${GITHUB_WORKSPACE}/assets/"* "${APP_DIR}/public/"
-          else
-            echo "ERROR: assets directory not found in workspace."
-            exit 1
-          fi
-
-          # Move the backend server script out of public root if placed there
-          if [ -f "${APP_DIR}/public/terminal_server.js" ]; then
-            mv "${APP_DIR}/public/terminal_server.js" "${APP_DIR}/terminal_server.js"
-          fi
+          node "${GITHUB_WORKSPACE}/assets/stage-assets.js" "${APP_DIR}"
 
       - name: Launch terminal server
         shell: bash

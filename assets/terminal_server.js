@@ -3,31 +3,14 @@ const path = require('path');
 const http = require('http');
 const WebSocket = require('ws');
 const pty = require('node-pty');
+const { createStaticHandler } = require('./static-server');
 
 const PORT = Number(process.env.PORT || 8080);
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const shells = new Set();
 let ending = false;
 
-const server = http.createServer((req, res) => {
-  let filePath = path.join(PUBLIC_DIR, req.url === '/' ? 'index.html' : req.url);
-  if (!filePath.startsWith(PUBLIC_DIR)) {
-    res.writeHead(403);
-    res.end('Access denied');
-    return;
-  }
-  fs.readFile(filePath, (err, data) => {
-    if (err) {
-      res.writeHead(404);
-      res.end('Not found');
-      return;
-    }
-    const ext = path.extname(filePath);
-    const contentType = ext === '.css' ? 'text/css' : ext === '.js' ? 'application/javascript' : 'text/html';
-    res.writeHead(200, { 'Content-Type': contentType });
-    res.end(data);
-  });
-});
+const server = http.createServer(createStaticHandler(PUBLIC_DIR));
 
 const wss = new WebSocket.Server({ server });
 

@@ -30,6 +30,50 @@ What's in `files/azure-identity-demo/` (saved to your session storage)
 | `attack/attack-walkthrough.md` | Full live-demo script: setup, attack steps, reset commands, closing mitigation slide |
 
 
+## Local terminal assets
+
+The OIDC Interactive Shell workflow installs the pinned dependencies from
+`assets/package-lock.json` with `npm ci`. `assets/stage-assets.js` validates an
+explicit file allowlist, then creates this runtime layout:
+
+```text
+APP_DIR/
+  package.json, package-lock.json, node_modules/   # backend dependencies only
+  terminal_server.js, static-server.js             # never under public/
+  public/
+    index.html, terminal.css
+    vendor/xterm/       # browser JS, CSS, adjacent source map, LICENSE
+    vendor/addon-fit/   # browser JS, adjacent source map, LICENSE
+```
+
+Custom HTML, CSS, and inline browser JavaScript remain in `assets/`; all browser
+asset references are relative and same-origin. The existing stylesheet is retained.
+The installed xterm CSS requires no adjacent fonts/images. Add future public files
+(including nested paths) explicitly to the staging allowlist; do not copy the entire
+assets directory. Staging fails if a required file is missing, and removes stale
+public files. Backend sources, manifests, tests, dotfiles, and unrelated files are
+not staged into public.
+
+For isolated local validation (Node.js 18+), replace the absolute checkout path:
+
+```bash
+cd /path/to/policy-as-code/assets
+npm ci --ignore-scripts --no-audit --no-fund
+npm test
+```
+
+These tests stage real npm browser assets in temporary directories and serve only
+static HTTP on loopback with an ephemeral port. They never import the shell backend,
+spawn a PTY, access OIDC credentials, or start a tunnel. Native dependency install
+scripts are intentionally skipped for these tests; the workflow retains them for
+its backend runtime. Tests cover local URLs, query strings, GET/HEAD, MIME types,
+missing/invalid paths, traversal and symlink escapes, and backend exclusion.
+
+This static-asset update does **not** add shell authentication or change OIDC,
+secrets access, privilege, or tunnel behavior. The existing public tunnel and
+privileged interactive shell remain security concerns; passing static tests does
+not validate or secure them. Do not run that workflow for static-asset validation.
+
 ## Two configurations to contrast
 
 | | Secure baseline | Vulnerable demo variant |
