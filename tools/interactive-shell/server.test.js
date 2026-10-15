@@ -102,7 +102,7 @@ test('unauthenticated, cross-origin, missing-origin, and query-token clients can
   const f = await fixture(t, { spawn: () => { spawns++; assert.fail('Unauthorized PTY'); } });
   for (const headers of [
     { Authorization: '' }, { Authorization: 'Basic invalid' }, { Origin: 'https://attacker.example' },
-    { Origin: '' }
+    { Origin: '' }, { Authorization: ['Bearer', randomBytes(32).toString('hex')].join(' ') }
   ]) assert.equal((await f.login(headers)).status, 401);
   await denied(f.connect());
   await denied(f.connect(undefined, {}, '/terminal?token=' + secret));

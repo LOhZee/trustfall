@@ -18,7 +18,6 @@ async function run({
   }
   const directory = mkdtempSync(join(tmpdir(), 'interactive-shell-tunnel-'));
   const knownHosts = join(directory, 'known_hosts');
-  writeFileSync(knownHosts, env.INTERACTIVE_SHELL_SSH_KNOWN_HOSTS + '\n', { mode: 0o600 });
   const port = 8080;
   let tunnel;
   let terminal;
@@ -35,12 +34,14 @@ async function run({
     clearTimeout(endpointTimer);
     clearTimeout(durationTimer);
     for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) signals.off(signal, onSignal);
-    terminal?.close();
+    try { terminal?.close(); }
+    catch { log('Diagnostic server cleanup failed.'); code = 1; }
     if (tunnel && tunnel.exitCode === null && tunnel.signalCode === null) {
       tunnel.kill('SIGTERM');
       killTimer = setTimeout(() => tunnel.kill('SIGKILL'), 1000);
     }
-    rmSync(directory, { recursive: true, force: true });
+    try { rmSync(directory, { recursive: true, force: true }); }
+    catch { log('Temporary SSH directory cleanup failed.'); code = 1; }
     resolveDone(code);
   }
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) signals.on(signal, onSignal);
@@ -49,6 +50,7 @@ async function run({
     finish(0);
   }, durationMs);
   try {
+    writeFileSync(knownHosts, env.INTERACTIVE_SHELL_SSH_KNOWN_HOSTS + '\n', { mode: 0o600 });
     tunnel = spawnTunnel('ssh', [
       '-F', '/dev/null', '-T',
       '-o', 'BatchMode=yes', '-o', 'IdentityAgent=none', '-o', 'IdentityFile=none',

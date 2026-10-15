@@ -121,7 +121,11 @@ function createTerminalServer({ secret, origin, cwd, spawn = pty.spawn, onSessio
       exitSubscription?.dispose();
       if (shell) killTerminal(shell);
       ws.terminate();
-      if (home) rmSync(home, { recursive: true, force: true });
+      try {
+        if (home) rmSync(home, { recursive: true, force: true });
+      } catch {
+        exitCode = 1;
+      }
       active = undefined;
       onSessionEnd(exitCode);
     };

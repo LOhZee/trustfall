@@ -37,7 +37,13 @@ function harness(options = {}) {
     env, signals, log: (line) => logs.push(line),
     discoveryMs: 100, durationMs: 1000,
     spawnTunnel: (...args) => { spawnArgs = args; return tunnel; },
-    createServer: (value) => { config = value; return { server, close: () => { closes++; } }; },
+    createServer: (value) => {
+      config = value;
+      return { server, close: () => {
+        closes++;
+        if (options.cleanupError) throw new Error('Cleanup fixture error');
+      } };
+    },
     ...options
   });
   return {
@@ -134,4 +140,14 @@ test('an SSH child ignoring SIGTERM is forcibly killed', async () => {
   assert.equal(await f.done, 130);
   await new Promise((resolve) => setTimeout(resolve, 1100));
   assert.deepEqual(f.kills, ['SIGTERM', 'SIGKILL']);
+});
+
+test('a server cleanup error does not prevent SSH and temporary-directory cleanup', async () => {
+  const f = harness({ cleanupError: true });
+  f.tunnel.stdout.write('https://fixture.lhr.life\n');
+  await new Promise((resolve) => setImmediate(resolve));
+  f.config().onSessionEnd();
+  assert.equal(await f.done, 1);
+  assert.deepEqual(f.kills, ['SIGTERM']);
+  assert.ok(!existsSync(f.spawnArgs()[2].env.HOME));
 });
