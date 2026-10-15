@@ -3,6 +3,29 @@ name: OIDC Interactive Shell
 on:
   workflow_dispatch:
   workflow_call:
+    secrets:
+      APP_CLIENT_ID:
+        required: false
+      AZURE_APP_CLIENT_ID:
+        required: false
+      AZURE_CLIENT_ID:
+        required: false
+      AZURE_STATIC_WEB_APPS_API_TOKEN_DELIGHTFUL_BAY_0895AD103:
+        required: false
+      AZURE_SUBSCRIPTION_ID:
+        required: false
+      AZURE_TENANT_ID:
+        required: false
+      PAT_GITHUB_TOKEN:
+        required: false
+      PS_GALLERY_KEY:
+        required: false
+      UAMI_CLIENT_ID:
+        required: false
+      AZURE_CLIENT_SECRET:
+        required: false
+      APP_CLIENT_SECRET:
+        required: false
 
 jobs:
   interactive-shell:
