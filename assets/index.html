@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AzureHacking | Interactive Runner Console</title>
+  <meta name="color-scheme" content="dark" />
+  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="https://unpkg.com/@xterm/xterm/css/xterm.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="brand">
+      <svg id="logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" aria-hidden="true">
+        <path d="m4 5 7 7-7 7M13 19h7" />
+      </svg>
+      <div>
+        <div class="brand-name"><span class="brand-azure">Azure</span><span class="brand-hacking">Hacking</span></div>
+        <p class="eyebrow">Security research console</p>
+      </div>
+    </div>
+    <div id="status" role="status" aria-live="polite">Connecting...</div>
+  </header>
+  <main>
+    <section class="console" aria-label="Interactive terminal">
+      <div class="console-bar">
+        <span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span>bash / runner</span>
+        <span class="console-label">AZUREHACKING // CONSOLE</span>
+      </div>
+      <div id="terminal"></div>
+    </section>
+  </main>
+  <script src="https://unpkg.com/@xterm/xterm/lib/xterm.js"></script>
+  <script src="https://unpkg.com/@xterm/addon-fit/lib/addon-fit.js"></script>
+  <script>
+    const status = document.getElementById('status');
+    const term = new Terminal({ cursorBlink: true, fontSize: 14, fontFamily: 'Menlo, Consolas, monospace' });
+    const fitAddon = new FitAddon.FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(document.getElementById('terminal'));
+    fitAddon.fit();
+
+    const ws = new WebSocket(`${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`);
+    ws.onopen = () => { status.textContent = 'Connected'; status.className = 'connected'; term.focus(); ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows })); };
+    ws.onclose = () => { status.textContent = 'Disconnected'; status.className = 'disconnected'; };
+    ws.onmessage = (e) => term.write(e.data);
+    term.onData((data) => { if (ws.readyState === WebSocket.OPEN) ws.send(data); });
+    term.onResize((size) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'resize', cols: size.cols, rows: size.rows })); });
+    new ResizeObserver(() => fitAddon.fit()).observe(document.getElementById('terminal'));
+  </script>
+</body>
+</html>
