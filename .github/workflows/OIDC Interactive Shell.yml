@@ -4,28 +4,10 @@ on:
   workflow_dispatch:
   workflow_call:
     secrets:
-      APP_CLIENT_ID:
-        required: false
-      AZURE_APP_CLIENT_ID:
-        required: false
-      AZURE_CLIENT_ID:
-        required: false
-      AZURE_STATIC_WEB_APPS_API_TOKEN_DELIGHTFUL_BAY_0895AD103:
-        required: false
-      AZURE_SUBSCRIPTION_ID:
-        required: false
-      AZURE_TENANT_ID:
-        required: false
-      PAT_GITHUB_TOKEN:
-        required: false
-      PS_GALLERY_KEY:
-        required: false
-      UAMI_CLIENT_ID:
-        required: false
-      AZURE_CLIENT_SECRET:
-        required: false
-      APP_CLIENT_SECRET:
-        required: false
+      AZURE_CLIENT_ID: { required: false }
+      AZURE_SUBSCRIPTION_ID: { required: false }
+      AZURE_TENANT_ID: { required: false }
+      PAT_GITHUB_TOKEN: { required: false }
 
 jobs:
   interactive-shell:
@@ -48,20 +30,10 @@ jobs:
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
 
     steps:
-      - name: Checkout caller repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Checkout repository assets
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-
-      - name: Verify OIDC environment
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] \vert{}\vert{} [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
-            echo "ERROR: OIDC environment variables are not set."
-            exit 1
-          fi
-          echo "=== OIDC Interactive Shell Initializing ==="
 
       - name: Install runtime dependencies
         shell: bash
@@ -69,243 +41,16 @@ jobs:
           set -euo pipefail
           mkdir -p "${APP_DIR}"/public
           cd "${APP_DIR}"
-
           npm init -y >/dev/null 2>&1
           npm install --no-audit --no-fund @xterm/xterm @xterm/addon-fit node-pty ws
 
-      - name: Copy external CSS asset
+      - name: Deploy assets to runtime directory
         shell: bash
         run: |
           set -euo pipefail
-          # Copy the separated CSS file from your repository into the web root
-          if [ -f "${GITHUB_WORKSPACE}/assets/terminal.css" ]; then
-            cp "${GITHUB_WORKSPACE}/assets/terminal.css" "${APP_DIR}/public/style.css"
-          elif [ -f "${GITHUB_WORKSPACE}/terminal.css" ]; then
-            cp "${GITHUB_WORKSPACE}/terminal.css" "${APP_DIR}/public/style.css"
-          else
-            echo "ERROR: terminal.css not found in repository path."
-            exit 1
-          fi
-
-      - name: Write terminal web UI
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat > "${APP_DIR}/public/index.html" << 'EOF'
-          <!DOCTYPE html>
-          <html lang="en">
-          <head>
-            <meta charset="utf-8" />
-            <meta name="viewport" content="width=device-width, initial-scale=1" />
-            <title>AzureHacking | Interactive Runner Console</title>
-            <meta name="color-scheme" content="dark" />
-            <link rel="icon" href="https://azurehacking.com/images/favicon.svg" type="image/svg+xml" />
-            <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Share+Tech+Mono&display=swap" />
-            <!-- Loaded from separate repository file -->
-            <link rel="stylesheet" href="style.css" />
-            <link rel="stylesheet" href="https://unpkg.com/@xterm/xterm/css/xterm.css" />
-          </head>
-          <body>
-            <header class="site-header">
-              <div class="brand">
-                <svg id="logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" aria-hidden="true">
-                  <path d="m4 5 7 7-7 7M13 19h7" />
-                </svg>
-                <div>
-                  <div class="brand-name"><span class="brand-azure">Azure</span><span class="brand-hacking">Hacking</span></div>
-                  <p class="eyebrow">Security research console</p>
-                </div>
-              </div>
-              <div id="status" role="status" aria-live="polite">Connecting...</div>
-            </header>
-            <main>
-              <section class="intro" aria-labelledby="console-title">
-                <p class="eyebrow">GitHub Actions / Interactive session</p>
-                <h1 id="console-title">Runner console<span style="color: var(--accent)">_</span></h1>
-                <p class="description">An ephemeral workspace for authorised security research. Commands execute inside the runner job container.</p>
-              </section>
-              <section class="console" aria-label="Interactive terminal">
-                <div class="console-bar">
-                  <span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span>
-                  <span>bash / runner</span>
-                  <span class="console-label">AZUREHACKING // CONSOLE</span>
-                </div>
-                <div id="terminal"></div>
-              </section>
-            </main>
-            <footer class="session-footer">
-              <span><kbd>Ctrl+C</kbd> interrupt &nbsp; / &nbsp; <kbd>exit</kbd> end job</span>
-              <span>Authorised use only / Session ends with the job</span>
-            </footer>
-
-            <script src="https://unpkg.com/@xterm/xterm/lib/xterm.js"></script>
-            <script src="https://unpkg.com/@xterm/addon-fit/lib/addon-fit.js"></script>
-            <script>
-              const status = document.getElementById('status');
-              const term = new Terminal({
-                cursorBlink: true,
-                cursorStyle: 'block',
-                fontSize: 14,
-                fontFamily: 'Menlo, Consolas, monospace',
-                theme: {
-                  background: '#0a0a0f',
-                  foreground: '#e2e8f0',
-                  cursor: '#00d4ff',
-                  cursorAccent: '#0a0a0f',
-                  selectionBackground: '#35305b',
-                  black: '#12121a',
-                  red: '#ff8585',
-                  green: '#6ee7b7',
-                  yellow: '#ffdc80',
-                  blue: '#80bfff',
-                  magenta: '#d4a5ff',
-                  cyan: '#00d4ff',
-                  white: '#e2e8f0',
-                  brightBlack: '#94a3b8',
-                  brightRed: '#ffaaaa',
-                  brightGreen: '#a3ffa3',
-                  brightYellow: '#ffe9ad',
-                  brightBlue: '#b0d6ff',
-                  brightMagenta: '#e5c5ff',
-                  brightCyan: '#b0fff4',
-                  brightWhite: '#ffffff'
-                }
-              });
-
-              const fitAddon = new FitAddon.FitAddon();
-              term.loadAddon(fitAddon);
-              term.open(document.getElementById('terminal'));
-              fitAddon.fit();
-
-              const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-              const ws = new WebSocket(`${protocol}//${window.location.host}`);
-
-              ws.onopen = () => {
-                status.textContent = 'Connected';
-                status.className = 'connected';
-                term.focus();
-                ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-              };
-
-              ws.onclose = (e) => {
-                status.textContent = 'Disconnected';
-                status.className = 'disconnected';
-              };
-
-              ws.onerror = (e) => {
-                status.textContent = 'Error';
-                status.className = 'disconnected';
-              };
-
-              ws.onmessage = (e) => term.write(e.data);
-
-              term.onData((data) => {
-                if (ws.readyState === WebSocket.OPEN) ws.send(data);
-              });
-
-              term.onResize((size) => {
-                if (ws.readyState === WebSocket.OPEN) {
-                  ws.send(JSON.stringify({ type: 'resize', cols: size.cols, rows: size.rows }));
-                }
-              });
-
-              const terminalResizeObserver = new ResizeObserver(() => fitAddon.fit());
-              terminalResizeObserver.observe(document.getElementById('terminal'));
-
-              document.getElementById('terminal').addEventListener('click', () => term.focus());
-              window.addEventListener('load', () => term.focus());
-              setTimeout(() => fitAddon.fit(), 150);
-            </script>
-          </body>
-          </html>
-          EOF
-
-      - name: Write terminal server
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat > "${APP_DIR}/terminal_server.js" << 'EOF'
-          const fs = require('fs');
-          const path = require('path');
-          const http = require('http');
-          const WebSocket = require('ws');
-          const pty = require('node-pty');
-
-          const PORT = Number(process.env.PORT || 8080);
-          const PUBLIC_DIR = path.join(__dirname, 'public');
-          const shells = new Set();
-          let ending = false;
-
-          const server = http.createServer((req, res) => {
-            let filePath = path.join(PUBLIC_DIR, req.url === '/' ? 'index.html' : req.url);
-            if (!filePath.startsWith(PUBLIC_DIR)) {
-              res.writeHead(403);
-              res.end('Access denied');
-              return;
-            }
-            fs.readFile(filePath, (err, data) => {
-              if (err) {
-                res.writeHead(404);
-                res.end('Not found');
-                return;
-              }
-              const ext = path.extname(filePath);
-              const contentType = ext === '.css' ? 'text/css' : ext === '.js' ? 'application/javascript' : 'text/html';
-              res.writeHead(200, { 'Content-Type': contentType });
-              res.end(data);
-            });
-          });
-
-          const wss = new WebSocket.Server({ server });
-
-          wss.on('connection', (ws) => {
-            const shell = pty.spawn('/bin/bash', [], {
-              name: 'xterm-256color',
-              cols: 80,
-              rows: 24,
-              cwd: process.env.GITHUB_WORKSPACE,
-              env: process.env
-            });
-            shells.add(shell);
-            let disconnected = false;
-
-            shell.onData((data) => {
-              if (ws.readyState === WebSocket.OPEN) ws.send(data);
-            });
-
-            shell.onExit(({ exitCode }) => {
-              shells.delete(shell);
-              if (disconnected || ending) return;
-              ending = true;
-              fs.writeFileSync('/tmp/terminal_exit_code', String(exitCode));
-              for (const otherShell of shells) otherShell.kill();
-              process.exit(exitCode);
-            });
-
-            ws.on('message', (message) => {
-              const data = message.toString();
-              try {
-                const json = JSON.parse(data);
-                if (json.type === 'resize') {
-                  shell.resize(json.cols, json.rows);
-                } else {
-                  shell.write(data);
-                }
-              } catch {
-                shell.write(data);
-              }
-            });
-
-            ws.on('close', () => {
-              disconnected = true;
-              shell.kill();
-            });
-          });
-
-          server.listen(PORT, '0.0.0.0', () => {
-            console.log(`Terminal server listening on port ${PORT}`);
-          });
-          EOF
+          cp -r "${GITHUB_WORKSPACE}/assets/"* "${APP_DIR}/public/"
+          mv "${APP_DIR}/public/terminal_server.js" "${APP_DIR}/terminal_server.js"
+          mv "${APP_DIR}/public/style.css" "${APP_DIR}/public/style.css" || true
 
       - name: Launch terminal server
         shell: bash
@@ -316,7 +61,7 @@ jobs:
           echo $! > /tmp/node.pid
           sleep 2
 
-      - name: Start localhost.run tunnel
+      - name: Start tunnel
         shell: bash
         run: |
           set -euo pipefail
@@ -345,11 +90,11 @@ jobs:
           set -euo pipefail
           NODE_PID="$(cat /tmp/node.pid)"
           SSH_PID="$(cat /tmp/ssh.pid)"
-          trap 'kill ${SSH_PID}${NODE_PID} 2>/dev/null || true' EXIT
+          trap 'kill ${SSH_PID} ${NODE_PID} 2>/dev/null || true' EXIT
           while [ ! -f /tmp/terminal_exit_code ]; do
-            if ! kill -0 "${NODE_PID}" 2>/dev/null \vert{}\vert{} ! kill -0 "${SSH_PID}" 2>/dev/null; then
+            if ! kill -0 "${NODE_PID}" 2>/dev/null || ! kill -0 "${SSH_PID}" 2>/dev/null; then
               exit 1
             fi
             sleep 1
-          done
+          fi
           exit "$(cat /tmp/terminal_exit_code)"
