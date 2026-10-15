@@ -106,3 +106,32 @@ test('server errors and established tunnel loss clean up both resources', async 
     });
   }
 });
+
+test('established sessions are closed on cancellation and runtime expiry', async (t) => {
+  for (const mode of ['SIGTERM', 'runtime']) {
+    await t.test(mode, async () => {
+      const f = harness({ durationMs: mode === 'runtime' ? 30 : 1000 });
+      f.tunnel.stdout.write('https://fixture.lhr.life\n');
+      await new Promise((resolve) => setImmediate(resolve));
+      if (mode === 'SIGTERM') f.signals.emit(mode);
+      assert.equal(await f.done, mode === 'runtime' ? 0 : 130);
+      assert.equal(f.closes(), 1);
+      assert.deepEqual(f.kills, ['SIGTERM']);
+    });
+  }
+});
+
+test('an SSH child ignoring SIGTERM is forcibly killed', async () => {
+  const f = harness();
+  f.tunnel.kill = (signal) => {
+    f.kills.push(signal);
+    if (signal === 'SIGKILL') {
+      f.tunnel.signalCode = signal;
+      f.tunnel.emit('exit', null, signal);
+    }
+  };
+  f.signals.emit('SIGTERM');
+  assert.equal(await f.done, 130);
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  assert.deepEqual(f.kills, ['SIGTERM', 'SIGKILL']);
+});
