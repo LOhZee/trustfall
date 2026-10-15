@@ -143,6 +143,10 @@ not a sandbox against those operators. It does not change any cloud resources.
 
 - `public/index.html`, `terminal.css`, `terminal.js`: the terminal UI, using local
   xterm and fit-addon bundles (no CDN or remote executable loader).
+  The branded console layout and cyan/purple palette come from `git-s-hell.yml`;
+  local gradients and system fonts replace its remote background image and fonts.
+  The xterm theme is configured in `terminal.js`, since page CSS alone cannot
+  change xterm's rendered terminal colors.
 - `server.js`: explicit static routes, authentication, WebSocket protocol, and PTYs.
 - `lifecycle.js`: verified SSH tunnel, endpoint discovery, timeout, and cleanup.
 - `*.test.js`: Node's built-in tests, including a real local PTY and mocked tunnels.

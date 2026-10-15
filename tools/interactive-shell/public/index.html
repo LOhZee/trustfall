@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Interactive diagnostic shell</title>
+  <title>AzureHacking | Interactive Diagnostic Shell</title>
   <link rel="stylesheet" href="/xterm.css">
   <link rel="stylesheet" href="/terminal.css">
   <script defer src="/xterm.js"></script>
@@ -11,13 +11,42 @@
   <script defer src="/terminal.js"></script>
 </head>
 <body>
-  <form id="connect">
-    <label>Dedicated shell access secret
-      <input id="secret" type="password" autocomplete="off" required>
-    </label>
-    <button>Connect</button>
-  </form>
-  <p id="status" role="status">Authorized diagnostic use only. Closing the terminal ends this run.</p>
-  <div id="terminal"></div>
+  <header class="site-header">
+    <div class="brand">
+      <svg id="logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" aria-hidden="true">
+        <path d="m4 5 7 7-7 7M13 19h7" />
+      </svg>
+      <div>
+        <div class="brand-name"><span class="brand-azure">Azure</span><span class="brand-hacking">Hacking</span></div>
+        <p class="eyebrow">Interactive diagnostic shell</p>
+      </div>
+    </div>
+    <div id="status" role="status" aria-live="polite">Authentication required</div>
+  </header>
+  <main>
+    <section class="intro" aria-labelledby="console-title">
+      <p class="eyebrow">GitHub Actions / Interactive session</p>
+      <h1 id="console-title">Runner console_</h1>
+      <p class="description">An ephemeral workspace for authorized diagnostics. Commands execute inside the runner job container.</p>
+    </section>
+    <form id="connect">
+      <label>Dedicated shell access secret
+        <input id="secret" type="password" autocomplete="off" required>
+      </label>
+      <button>Connect</button>
+    </form>
+    <section class="console" aria-label="Interactive terminal">
+      <div class="console-bar">
+        <span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span>bash / runner</span>
+        <span class="console-label">AZUREHACKING // CONSOLE</span>
+      </div>
+      <div id="terminal"></div>
+    </section>
+  </main>
+  <footer class="session-footer">
+    <span><kbd>Ctrl+C</kbd> interrupt &nbsp; / &nbsp; <kbd>exit</kbd> end job</span>
+    <span>Authorized use only / Closing the terminal ends this run</span>
+  </footer>
 </body>
 </html>

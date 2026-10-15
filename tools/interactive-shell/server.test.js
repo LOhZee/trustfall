@@ -6,6 +6,7 @@ const { once } = require('node:events');
 const http = require('node:http');
 const { randomBytes } = require('node:crypto');
 const { existsSync, readFileSync } = require('node:fs');
+const { join } = require('node:path');
 const { WebSocket } = require('ws');
 const { createTerminalServer } = require('./server');
 
@@ -88,6 +89,14 @@ test('only allowlisted assets are served with correct content types and no secre
       for (const asset of ['/terminal.js', '/xterm.js', '/addon-fit.js', '/xterm.css', '/terminal.css']) {
         assert.ok(response.body.includes(asset));
       }
+      assert.ok(response.body.indexOf('/xterm.css') < response.body.indexOf('/terminal.css'));
+      for (const selector of ['site-header', 'brand-name', 'console-bar', 'window-dots', 'session-footer']) {
+        assert.ok(response.body.includes(`class="${selector}"`));
+      }
+      assert.ok(!/<(?:script|link)[^>]+(?:src|href)="https?:/.test(response.body));
+    }
+    if (path === '/terminal.css') {
+      assert.equal(response.body, readFileSync(join(__dirname, 'public/terminal.css'), 'utf8'));
     }
   }
   for (const path of ['/server.js', '/package.json', '/.git/config', '/%2e%2e/server.js',
