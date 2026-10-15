@@ -86,6 +86,10 @@ async function run({
     if (!stopping) {
       terminal = createServer({
         secret, origin, cwd: env.GITHUB_WORKSPACE || process.cwd(),
+        azureIdentifiers: {
+          AZURE_CLIENT_ID: env.AZURE_CLIENT_ID,
+          AZURE_TENANT_ID: env.AZURE_TENANT_ID
+        },
         onSessionEnd: (code = 0) => finish(code)
       });
       terminal.server.on('error', () => { log('Diagnostic server failed.'); finish(1); });

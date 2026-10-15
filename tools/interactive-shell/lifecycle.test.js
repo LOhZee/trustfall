@@ -30,6 +30,9 @@ function harness(options = {}) {
   const env = {
     INTERACTIVE_SHELL_ACCESS_SECRET: randomBytes(32).toString('hex'),
     INTERACTIVE_SHELL_SSH_KNOWN_HOSTS: 'localhost.run ssh-ed25519 test-fixture-not-a-real-key',
+    AZURE_CLIENT_ID: '11111111-1111-1111-1111-111111111111',
+    AZURE_TENANT_ID: '22222222-2222-2222-2222-222222222222',
+    AZURE_CLIENT_SECRET: 'must-not-be-inherited',
     GITHUB_WORKSPACE: '/workspace', APPLICATION_SECRET: 'must-not-be-inherited'
   };
   let config;
@@ -60,6 +63,10 @@ test('tunnel endpoint discovery starts loopback server and session completion cl
   assert.deepEqual(f.started(), { port: 8080, host: '127.0.0.1' });
   assert.equal(f.config().origin, 'https://fixture.lhr.life');
   assert.equal(f.config().cwd, '/workspace');
+  assert.deepEqual(f.config().azureIdentifiers, {
+    AZURE_CLIENT_ID: f.env.AZURE_CLIENT_ID,
+    AZURE_TENANT_ID: f.env.AZURE_TENANT_ID
+  });
   assert.equal(f.env.INTERACTIVE_SHELL_ACCESS_SECRET, undefined);
   const [command, args, spawnOptions] = f.spawnArgs();
   assert.equal(command, 'ssh');

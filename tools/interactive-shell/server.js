@@ -33,8 +33,18 @@ function killTerminal(shell) {
   try { shell.kill('SIGKILL'); } catch {}
 }
 
-function createTerminalServer({ secret, origin, cwd, spawn = pty.spawn, onSessionEnd = () => {} }) {
+function createTerminalServer({ secret, origin, cwd, azureIdentifiers = {}, spawn = pty.spawn, onSessionEnd = () => {} }) {
   validateSecret(secret);
+  const identifiers = {};
+  for (const name of ['AZURE_CLIENT_ID', 'AZURE_TENANT_ID']) {
+    const value = azureIdentifiers[name];
+    if (value === undefined || value === '') continue;
+    if (typeof value !== 'string' ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) {
+      throw new Error(`${name} must be a UUID when configured.`);
+    }
+    identifiers[name] = value;
+  }
   const url = new URL(origin);
   if (url.origin !== origin || !(url.protocol === 'https:' ||
       (url.protocol === 'http:' && url.hostname === '127.0.0.1'))) {
@@ -136,7 +146,10 @@ function createTerminalServer({ secret, origin, cwd, spawn = pty.spawn, onSessio
       home = mkdtempSync(join(tmpdir(), 'interactive-shell-home-'));
       shell = spawn('/bin/bash', ['--noprofile', '--norc'], {
         name: 'xterm-256color', cols: 80, rows: 24, cwd,
-        env: { HOME: home, PATH: '/usr/local/bin:/usr/bin:/bin', TERM: 'xterm-256color', LANG: 'C.UTF-8' }
+        env: {
+          HOME: home, PATH: '/usr/local/bin:/usr/bin:/bin', TERM: 'xterm-256color', LANG: 'C.UTF-8',
+          ...identifiers
+        }
       });
       dataSubscription = shell.onData((data) => {
         if (ws.readyState === WebSocket.OPEN) {
@@ -198,6 +211,10 @@ if (require.main === module) {
   try {
     terminal = createTerminalServer({
       secret, origin: 'http://127.0.0.1:8080',
+      azureIdentifiers: {
+        AZURE_CLIENT_ID: process.env.AZURE_CLIENT_ID,
+        AZURE_TENANT_ID: process.env.AZURE_TENANT_ID
+      },
       cwd: process.env.GITHUB_WORKSPACE || process.cwd(), onSessionEnd: stop
     });
     for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.once(signal, stop);

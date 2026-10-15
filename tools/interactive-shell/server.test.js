@@ -73,6 +73,42 @@ test('missing credentials fail closed before a server or PTY is created', () => 
   assert.throws(() => createTerminalServer({ secret, origin: 'http://public.example' }), /HTTPS/);
 });
 
+test('Azure identifier values must be UUIDs, not credentials or arbitrary environment data', () => {
+  for (const name of ['AZURE_CLIENT_ID', 'AZURE_TENANT_ID']) {
+    for (const value of ['not-a-uuid', 'id\nINJECTED=value', 42, null]) {
+      assert.throws(() => createTerminalServer({
+        secret, origin, azureIdentifiers: { [name]: value }
+      }), new RegExp(`${name} must be a UUID`));
+    }
+  }
+});
+
+test('only the two optional Azure identifiers extend the shell environment', async (t) => {
+  const fake = fakeShell();
+  const identifiers = {
+    AZURE_CLIENT_ID: '11111111-1111-1111-1111-111111111111',
+    AZURE_TENANT_ID: '22222222-2222-2222-2222-222222222222'
+  };
+  const f = await fixture(t, {
+    spawn: fake.spawn,
+    azureIdentifiers: {
+      ...identifiers,
+      AZURE_CLIENT_SECRET: 'must-not-reach-the-shell',
+      ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'must-not-reach-the-shell',
+      INTERACTIVE_SHELL_ACCESS_SECRET: secret
+    }
+  });
+  const ws = f.connect((await f.login()).headers['set-cookie'][0].split(';')[0]);
+  await once(ws, 'open');
+  assert.deepEqual(fake.options().env, {
+    HOME: fake.options().env.HOME,
+    PATH: '/usr/local/bin:/usr/bin:/bin', TERM: 'xterm-256color', LANG: 'C.UTF-8',
+    ...identifiers
+  });
+  ws.close();
+  await once(ws, 'close');
+});
+
 test('only allowlisted assets are served with correct content types and no secrets', async (t) => {
   const f = await fixture(t, { spawn: () => assert.fail('Static requests cannot spawn a shell') });
   for (const [path, type] of [
@@ -202,7 +238,11 @@ test('server shutdown, shell exit, and spawn errors close sockets and clean home
 });
 
 test('real authenticated PTY supports output, resize, cwd, and an allowlisted environment', { timeout: 10_000 }, async (t) => {
-  const f = await fixture(t);
+  const azureIdentifiers = {
+    AZURE_CLIENT_ID: '11111111-1111-1111-1111-111111111111',
+    AZURE_TENANT_ID: '22222222-2222-2222-2222-222222222222'
+  };
+  const f = await fixture(t, { azureIdentifiers });
   const ws = f.connect((await f.login()).headers['set-cookie'][0].split(';')[0]);
   t.after(() => ws.terminate());
   let output = '';
@@ -210,13 +250,14 @@ test('real authenticated PTY supports output, resize, cwd, and an allowlisted en
   await once(ws, 'open');
   ws.send(JSON.stringify({ type: 'resize', cols: 101, rows: 39 }));
   // Construct markers inside Bash so echoed input cannot satisfy output assertions.
-  ws.send(JSON.stringify({ type: 'input', data: "printf 'REAL_%s\\n' PTY; pwd; stty size; printenv | cut -d= -f1 | sort; printf 'DONE_%s\\n' MARKER\r" }));
+  ws.send(JSON.stringify({ type: 'input', data: "printf 'REAL_%s\\n' PTY; pwd; stty size; printenv AZURE_CLIENT_ID AZURE_TENANT_ID; printenv | cut -d= -f1 | sort; printf 'DONE_%s\\n' MARKER\r" }));
   for (let i = 0; i < 200 && !output.includes('DONE_MARKER'); i++) {
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   assert.match(output, /REAL_PTY/);
   assert.ok(output.includes(__dirname));
   assert.match(output, /39 101/);
+  for (const value of Object.values(azureIdentifiers)) assert.ok(output.includes(value));
   assert.ok(!output.includes('INTERACTIVE_SHELL_ACCESS_SECRET'));
   assert.ok(!output.includes('ACTIONS_ID_TOKEN_REQUEST_TOKEN'));
   assert.match(output, /DONE_MARKER/);

@@ -11,6 +11,10 @@ on:
     secrets:
       INTERACTIVE_SHELL_ACCESS_SECRET:
         required: true
+      AZURE_CLIENT_ID:
+        required: false
+      AZURE_TENANT_ID:
+        required: false
 
 permissions:
   contents: read
@@ -51,4 +55,6 @@ jobs:
         env:
           INTERACTIVE_SHELL_ACCESS_SECRET: ${{ secrets.INTERACTIVE_SHELL_ACCESS_SECRET }}
           INTERACTIVE_SHELL_SSH_KNOWN_HOSTS: ${{ vars.INTERACTIVE_SHELL_SSH_KNOWN_HOSTS }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID || vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID || vars.AZURE_TENANT_ID }}
         run: node lifecycle.js

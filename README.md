@@ -183,11 +183,31 @@ The public tunnel uses `localhost.run`; its HTTPS termination is a **trust bound
 the provider can observe or alter traffic, including credentials and terminal data.
 Use only where this third-party trust is approved. The dedicated secret must not be
 reused for other systems. Protect workflow edits and restrict Actions execution to
-trusted maintainers. The PTY receives only HOME, PATH, TERM, and LANG (Bash adds its
+trusted maintainers. The PTY receives HOME, PATH, TERM, and LANG plus the optional
+`AZURE_CLIENT_ID` and `AZURE_TENANT_ID` identifiers described below (Bash adds its
 own standard variables), with a temporary home and the checked-out workspace as cwd.
 This environment allowlist is not isolation from the server: a trusted shell operator
 runs as the same container user and can inspect files/processes. Do not place unrelated
 secrets in the job, workspace, or container.
+
+### Optional Azure demo identifiers
+
+Set `AZURE_CLIENT_ID` and `AZURE_TENANT_ID` as repository Actions variables
+(recommended for these non-credential identifiers) or repository Actions secrets.
+Explicitly supplied secrets take precedence over variables. Both values are
+optional and must be UUIDs when supplied; unset/empty values are omitted from the
+shell. Direct dispatch and the example caller support both configurations.
+External reusable-workflow callers may explicitly map these two optional secrets;
+variable fallbacks are read from the caller repository. For local mode, export
+the two identifiers before `npm start`.
+
+These values are available to commands as `$AZURE_CLIENT_ID` and
+`$AZURE_TENANT_ID`; **they do not authenticate to Azure**. This change does not
+install Azure CLI or automatically sign in. Use a separately approved interactive
+authentication method with available tooling for the demo. Client secrets, access
+tokens, GitHub tokens, OIDC request credentials, and the shell access secret are
+still excluded from the PTY environment. No OIDC permissions are added. Never
+paste cloud credentials into this third-party-terminated public tunnel.
 
 ### Reusable-workflow migration (intentional breaking changes)
 
@@ -197,9 +217,10 @@ and pass that **same full SHA** as the required `implementation_ref` input. The
 workflow explicitly checks out this repository at that SHA, **not the caller's
 repository**. A read-only token must be able to read this public repository.
 
-Pass only `INTERACTIVE_SHELL_ACCESS_SECRET` in the caller's `secrets` mapping,
-not `secrets: inherit`. The old Azure/PAT/gallery secret declarations are removed;
-explicit mappings for them must be removed from callers. Set the verified SSH
+Pass `INTERACTIVE_SHELL_ACCESS_SECRET` and, if needed, only the optional
+`AZURE_CLIENT_ID` and `AZURE_TENANT_ID` identifiers in the caller's `secrets`
+mapping, not `secrets: inherit`. All other old Azure/PAT/gallery secret declarations
+remain removed; explicit mappings for them must be removed from callers. Set the verified SSH
 host-key variable in the caller repository too. Only `contents: read` is needed;
 remove caller `id-token: write`. Application-secret inheritance and unauthenticated
 public shells are deliberately unsupported. Container privileged mode is removed.

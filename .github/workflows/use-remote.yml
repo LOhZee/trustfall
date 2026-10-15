@@ -13,3 +13,5 @@ jobs:
       implementation_ref: ${{ github.sha }}
     secrets:
       INTERACTIVE_SHELL_ACCESS_SECRET: ${{ secrets.INTERACTIVE_SHELL_ACCESS_SECRET }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
