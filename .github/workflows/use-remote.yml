@@ -1,4 +1,4 @@
-name: Remote Interactive Shell
+name: GitHub Diagnostics Telemetry
 
 on:
   workflow_dispatch:
