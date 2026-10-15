@@ -1,0 +1,5 @@
+html, body { height: 100%; margin: 0; background: #111; color: #eee; }
+body { display: flex; flex-direction: column; font-family: system-ui, sans-serif; }
+form, #status { margin: .6rem; }
+input, button { font: inherit; }
+#terminal { flex: 1; min-height: 0; padding: .5rem; }

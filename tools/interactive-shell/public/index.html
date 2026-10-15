@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Interactive diagnostic shell</title>
+  <link rel="stylesheet" href="/xterm.css">
+  <link rel="stylesheet" href="/terminal.css">
+  <script defer src="/xterm.js"></script>
+  <script defer src="/addon-fit.js"></script>
+  <script defer src="/terminal.js"></script>
+</head>
+<body>
+  <form id="connect">
+    <label>Dedicated shell access secret
+      <input id="secret" type="password" autocomplete="off" required>
+    </label>
+    <button>Connect</button>
+  </form>
+  <p id="status" role="status">Authorized diagnostic use only. Closing the terminal ends this run.</p>
+  <div id="terminal"></div>
+</body>
+</html>
