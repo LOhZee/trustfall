@@ -38,7 +38,7 @@ jobs:
 
     permissions:
       contents: read
-      id-token: write # Required to inject OIDC environment variables
+      id-token: write
 
     env:
       APP_DIR: /opt/oidc-shell
@@ -57,13 +57,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] \vert{}\vert{} [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
             echo "ERROR: OIDC environment variables are not set."
             exit 1
           fi
-
           echo "=== OIDC Interactive Shell Initializing ==="
-          echo "OIDC request environment is available."
 
       - name: Install runtime dependencies
         shell: bash
@@ -74,6 +72,20 @@ jobs:
 
           npm init -y >/dev/null 2>&1
           npm install --no-audit --no-fund @xterm/xterm @xterm/addon-fit node-pty ws
+
+      - name: Copy external CSS asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Copy the separated CSS file from your repository into the web root
+          if [ -f "${GITHUB_WORKSPACE}/assets/terminal.css" ]; then
+            cp "${GITHUB_WORKSPACE}/assets/terminal.css" "${APP_DIR}/public/style.css"
+          elif [ -f "${GITHUB_WORKSPACE}/terminal.css" ]; then
+            cp "${GITHUB_WORKSPACE}/terminal.css" "${APP_DIR}/public/style.css"
+          else
+            echo "ERROR: terminal.css not found in repository path."
+            exit 1
+          fi
 
       - name: Write terminal web UI
         shell: bash
@@ -89,157 +101,8 @@ jobs:
             <meta name="color-scheme" content="dark" />
             <link rel="icon" href="https://azurehacking.com/images/favicon.svg" type="image/svg+xml" />
             <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Share+Tech+Mono&display=swap" />
-            <style>
-              :root {
-                --bg: #0a0a0f;
-                --surface: #12121a;
-                --accent: #00d4ff;
-                --purple: #7c3aed;
-                --text: #e2e8f0;
-                --muted: #94a3b8;
-                --border: #2d2d44;
-              }
-              *, *::before, *::after { box-sizing: border-box; }
-              html, body { margin: 0; height: 100%; background: var(--bg); }
-              body {
-                display: flex;
-                flex-direction: column;
-                height: 100dvh;
-                color: var(--text);
-                font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-                background:
-                  radial-gradient(ellipse at top right, #7c3aed26, transparent 55%),
-                  radial-gradient(ellipse at bottom left, #00d4ff12, transparent 50%),
-                  linear-gradient(135deg, #0a0a0ff2, #0a0a0fe6),
-                  url('https://blackcatwebshop.z13.web.core.windows.net/media/azure-hacking-corp.jpg') center / cover;
-              }
-              .site-header {
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                gap: 20px;
-                padding: 16px 28px;
-                border-bottom: 1px solid var(--border);
-                background: #12121ae8;
-                flex-shrink: 0;
-              }
-              .brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
-              #logo { width: 24px; height: 24px; color: #00ff00; flex-shrink: 0; }
-              .brand-name {
-                font: 400 1.15rem/1.2 'Share Tech Mono', monospace;
-                letter-spacing: 0.04em;
-                text-transform: uppercase;
-                white-space: nowrap;
-              }
-              .brand-azure { color: #00ff00; }
-              .brand-hacking { color: var(--accent); }
-              .eyebrow {
-                margin: 6px 0 0;
-                font: 11px/1.5 'Share Tech Mono', monospace;
-                letter-spacing: 2px;
-                text-transform: uppercase;
-                color: var(--muted);
-              }
-              #status {
-                display: inline-flex;
-                align-items: center;
-                gap: 9px;
-                padding: 10px 14px;
-                border: 1px solid #74602b;
-                background: #30270f;
-                color: #ffdc80;
-                font: 12px/1.4 monospace;
-                border-radius: 999px;
-                white-space: nowrap;
-              }
-              #status::before {
-                content: '';
-                width: 7px;
-                height: 7px;
-                border-radius: 50%;
-                background: currentColor;
-                box-shadow: 0 0 10px currentColor;
-              }
-              #status.connected { color: #6ee7b7; background: #102820; border-color: #24634e; }
-              #status.disconnected { color: #fca5a5; background: #2d161e; border-color: #7d354c; }
-              main {
-                display: flex;
-                flex-direction: column;
-                flex: 1;
-                min-height: 0;
-                padding: 24px 28px 16px;
-                gap: 18px;
-              }
-              .intro { flex-shrink: 0; }
-              .intro .eyebrow { color: var(--accent); margin: 0 0 8px; }
-              h1 {
-                font-size: clamp(22px, 3vw, 34px);
-                letter-spacing: -1px;
-                margin: 0;
-                color: var(--accent);
-                background: linear-gradient(135deg, var(--accent), #a78bfa);
-                -webkit-background-clip: text;
-                background-clip: text;
-                -webkit-text-fill-color: transparent;
-              }
-              .description { margin: 8px 0 0; color: var(--muted); font-size: 14px; line-height: 1.6; }
-              .console {
-                display: flex;
-                flex-direction: column;
-                flex: 1;
-                min-height: 0;
-                overflow: hidden;
-                border: 1px solid var(--border);
-                border-radius: 12px;
-                background: #0a0a0f;
-                box-shadow: 0 20px 60px #0008, 0 0 30px #00d4ff10;
-              }
-              .console-bar {
-                display: flex;
-                align-items: center;
-                gap: 14px;
-                padding: 12px 16px;
-                background: linear-gradient(110deg, var(--surface), #1a1a2e);
-                border-bottom: 1px solid var(--border);
-                font: 12px/1.4 monospace;
-                color: var(--muted);
-                flex-shrink: 0;
-              }
-              .window-dots { display: flex; gap: 6px; }
-              .window-dots i { width: 8px; height: 8px; border-radius: 50%; background: #64748b; }
-              .window-dots i:nth-child(2) { background: var(--purple); }
-              .window-dots i:last-child { background: var(--accent); }
-              .console-label { margin-left: auto; color: var(--accent); }
-              #terminal { flex: 1; min-height: 0; min-width: 0; width: 100%; padding: 14px; }
-              .session-footer {
-                display: flex;
-                justify-content: space-between;
-                flex-wrap: wrap;
-                gap: 8px 20px;
-                padding: 0 28px 16px;
-                color: var(--muted);
-                font: 11px/1.6 monospace;
-                flex-shrink: 0;
-              }
-              kbd { color: var(--text); font: inherit; }
-              @media (max-width: 600px) {
-                .site-header { padding: 12px 14px; gap: 10px; }
-                #logo { width: 21px; height: 21px; }
-                .brand { gap: 8px; }
-                .brand-name { font-size: 16px; }
-                .brand .eyebrow { font-size: 9px; letter-spacing: 1px; }
-                #status { padding: 8px 10px; font-size: 11px; }
-                main { padding: 18px 12px 12px; gap: 14px; }
-                #terminal { padding: 10px; }
-                .console-bar { padding: 10px 12px; }
-                .console-label { display: none; }
-                .session-footer { padding: 0 14px 12px; }
-              }
-              @media (max-height: 500px) {
-                .intro { display: none; }
-                main { padding-top: 12px; }
-              }
-            </style>
+            <!-- Loaded from separate repository file -->
+            <link rel="stylesheet" href="style.css" />
             <link rel="stylesheet" href="https://unpkg.com/@xterm/xterm/css/xterm.css" />
           </head>
           <body>
@@ -327,13 +190,11 @@ jobs:
               ws.onclose = (e) => {
                 status.textContent = 'Disconnected';
                 status.className = 'disconnected';
-                console.log('WebSocket closed:', e.code, e.reason);
               };
 
               ws.onerror = (e) => {
                 status.textContent = 'Error';
                 status.className = 'disconnected';
-                console.error('WebSocket error:', e);
               };
 
               ws.onmessage = (e) => term.write(e.data);
@@ -371,41 +232,33 @@ jobs:
           const pty = require('node-pty');
 
           const PORT = Number(process.env.PORT || 8080);
-          const HTML_PATH = path.join(__dirname, 'public', 'index.html');
-          const html = fs.readFileSync(HTML_PATH, 'utf8');
+          const PUBLIC_DIR = path.join(__dirname, 'public');
           const shells = new Set();
           let ending = false;
 
           const server = http.createServer((req, res) => {
-            res.writeHead(200, { 'Content-Type': 'text/html' });
-            res.end(html);
+            let filePath = path.join(PUBLIC_DIR, req.url === '/' ? 'index.html' : req.url);
+            if (!filePath.startsWith(PUBLIC_DIR)) {
+              res.writeHead(403);
+              res.end('Access denied');
+              return;
+            }
+            fs.readFile(filePath, (err, data) => {
+              if (err) {
+                res.writeHead(404);
+                res.end('Not found');
+                return;
+              }
+              const ext = path.extname(filePath);
+              const contentType = ext === '.css' ? 'text/css' : ext === '.js' ? 'application/javascript' : 'text/html';
+              res.writeHead(200, { 'Content-Type': contentType });
+              res.end(data);
+            });
           });
 
           const wss = new WebSocket.Server({ server });
 
-          function welcomeBanner() {
-            const access = process.getuid() === 0
-              ? 'Root access to the GitHub Actions runner job container'
-              : 'Non-root access to the GitHub Actions runner job container';
-
-            const border = '+' + '-'.repeat(60) + '+';
-            const lines = [
-              '',
-              'We have',
-              access,
-              'Ctrl+C interrupts a command; exit ends the job.'
-            ];
-
-            return (
-              '\x1b[0m\x1b[36m' + border + '\r\n' +
-              lines.map((line) => `| \x1b[0m${line.padEnd(58)}\x1b[36m |`).join('\r\n') +
-              '\r\n' + border + '\x1b[0m\r\n'
-            );
-          }
-
           wss.on('connection', (ws) => {
-            ws.send(welcomeBanner());
-
             const shell = pty.spawn('/bin/bash', [], {
               name: 'xterm-256color',
               cols: 80,
@@ -422,7 +275,6 @@ jobs:
 
             shell.onExit(({ exitCode }) => {
               shells.delete(shell);
-              console.log(`Shell exited with code ${exitCode}`);
               if (disconnected || ending) return;
               ending = true;
               fs.writeFileSync('/tmp/terminal_exit_code', String(exitCode));
@@ -460,56 +312,32 @@ jobs:
         run: |
           set -euo pipefail
           cd "${APP_DIR}"
-          rm -f /tmp/terminal_exit_code
-
           node "${APP_DIR}/terminal_server.js" > /tmp/node_server.log 2>&1 &
-          NODE_PID=$!
-          echo "${NODE_PID}" > /tmp/node.pid
+          echo $! > /tmp/node.pid
           sleep 2
-
-          if ! kill -0 "${NODE_PID}" 2>/dev/null; then
-            echo "ERROR: Node.js server crashed immediately."
-            cat /tmp/node_server.log || true
-            exit 1
-          fi
 
       - name: Start localhost.run tunnel
         shell: bash
         run: |
           set -euo pipefail
-          ssh \
-            -o StrictHostKeyChecking=no \
-            -o ExitOnForwardFailure=yes \
-            -o ServerAliveInterval=60 \
-            -R 80:localhost:${PORT} \
-            nokey@localhost.run > /tmp/ssh_tunnel.log 2>&1 &
-          SSH_PID=$!
-          echo "${SSH_PID}" > /tmp/ssh.pid
+          ssh -o StrictHostKeyChecking=no -o ExitOnForwardFailure=yes -o ServerAliveInterval=60 \
+            -R 80:localhost:${PORT} nokey@localhost.run > /tmp/ssh_tunnel.log 2>&1 &
+          echo $! > /tmp/ssh.pid
 
       - name: Print tunnel URL
         shell: bash
         run: |
           set -euo pipefail
-          echo "Waiting for SSH tunnel to establish..."
-          TUNNEL_URL=""
           for _ in {1..30}; do
             sleep 2
             TUNNEL_URL="$(grep -oE 'https://[a-z0-9-]+\.lhr\.life' /tmp/ssh_tunnel.log | head -n 1 || true)"
             if [ -n "${TUNNEL_URL}" ]; then
+              echo "=== TERMINAL URL ==="
+              echo "${TUNNEL_URL}"
+              echo "===================="
               break
             fi
           done
-
-          if [ -n "${TUNNEL_URL}" ]; then
-            echo "=== TERMINAL URL ==="
-            echo "${TUNNEL_URL}"
-            echo "===================="
-          else
-            echo "WARNING: Could not automatically extract the tunnel URL."
-            echo "--- SSH TUNNEL LOG ---"
-            cat /tmp/ssh_tunnel.log || true
-            echo "----------------------"
-          fi
 
       - name: Keep session alive
         shell: bash
@@ -517,31 +345,11 @@ jobs:
           set -euo pipefail
           NODE_PID="$(cat /tmp/node.pid)"
           SSH_PID="$(cat /tmp/ssh.pid)"
-          cleanup() {
-            for pid in "${SSH_PID}" "${NODE_PID}"; do
-              if kill -0 "${pid}" 2>/dev/null; then
-                kill "${pid}"
-              fi
-            done
-          }
-          trap cleanup EXIT
-          echo "Terminal is live. Open the URL above in your browser."
+          trap 'kill ${SSH_PID}${NODE_PID} 2>/dev/null || true' EXIT
           while [ ! -f /tmp/terminal_exit_code ]; do
-            if ! kill -0 "${NODE_PID}" 2>/dev/null; then
-              if [ -f /tmp/terminal_exit_code ]; then
-                break
-              fi
-              echo "ERROR: Terminal server stopped unexpectedly."
-              cat /tmp/node_server.log
-              exit 1
-            fi
-            if ! kill -0 "${SSH_PID}" 2>/dev/null; then
-              echo "ERROR: SSH tunnel stopped unexpectedly."
-              cat /tmp/ssh_tunnel.log
+            if ! kill -0 "${NODE_PID}" 2>/dev/null \vert{}\vert{} ! kill -0 "${SSH_PID}" 2>/dev/null; then
               exit 1
             fi
             sleep 1
           done
-          EXIT_CODE="$(cat /tmp/terminal_exit_code)"
-          echo "Terminal session ended with exit code ${EXIT_CODE}."
-          exit "${EXIT_CODE}"
+          exit "$(cat /tmp/terminal_exit_code)"
