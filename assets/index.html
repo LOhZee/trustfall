@@ -22,6 +22,11 @@
     <div id="status" role="status" aria-live="polite">Connecting...</div>
   </header>
   <main>
+    <div class="intro">
+      <p class="eyebrow">GitHub Actions / Interactive session</p>
+      <h1>Runner console_</h1>
+      <p class="description">An ephemeral workspace for authorised security research. Commands execute inside the runner job container.</p>
+    </div>
     <section class="console" aria-label="Interactive terminal">
       <div class="console-bar">
         <span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span>
@@ -31,6 +36,10 @@
       <div id="terminal"></div>
     </section>
   </main>
+  <footer class="session-footer">
+    <span><kbd>Ctrl+C</kbd> interrupt&ensp;/&ensp;<kbd>exit</kbd> close shell</span>
+    <span>Authorised use only / Session ends with the job</span>
+  </footer>
   <script src="./vendor/xterm/xterm.js"></script>
   <script src="./vendor/addon-fit/addon-fit.js"></script>
   <script>
