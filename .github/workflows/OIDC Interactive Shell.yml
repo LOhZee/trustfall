@@ -186,5 +186,5 @@ jobs:
               exit 1
             fi
             sleep 1
-          fi
+          done
           exit "$(cat /tmp/diag_exit)"
