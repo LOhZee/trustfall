@@ -3,7 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
-	"github.com/trustfall-ci/trustfall/internal/evidence"
+	"github.com/LOhZee/trustfall/internal/evidence"
 	"testing"
 	"time"
 )

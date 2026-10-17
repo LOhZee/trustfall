@@ -1,0 +1,16 @@
+name: Authorised GitHub OIDC identity assessment
+on: { workflow_dispatch: {} }
+
+# This is additional authority. Use the passive scan unless token issuance itself
+# is an authorised assessment objective.
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  trustfall:
+    uses: LOhZee/trustfall/.github/workflows/scan-oidc.yml@REPLACE_WITH_FULL_COMMIT_SHA
+    with:
+      image: ghcr.io/lohzee/trustfall@sha256:REPLACE_WITH_RELEASE_DIGEST
+      profile: baseline
+      audience: trustfall

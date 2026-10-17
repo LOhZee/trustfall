@@ -31,3 +31,38 @@ func TestFingerprintStableAcrossStatusChanges(t *testing.T) {
 		t.Fatal("finding identity changed with assessment result")
 	}
 }
+
+func TestRedactionPreservesBooleanPresenceMarkers(t *testing.T) {
+	out := RedactMap(map[string]any{"github_token_variable_present": true, "access_token": "secret"})
+	if out["github_token_variable_present"] != true || out["access_token"] != "[REDACTED]" {
+		t.Fatalf("unexpected marker redaction: %#v", out)
+	}
+}
+
+func TestNestedArrayMapsAreRedacted(t *testing.T) {
+	in := map[string]any{"items": []any{map[string]any{"client_secret": "nested-secret", "message": "safe"}}}
+	out := RedactMap(in)
+	items := out["items"].([]any)
+	nested := items[0].(map[string]any)
+	if nested["client_secret"] != "[REDACTED]" || nested["message"] != "safe" {
+		t.Fatalf("nested redaction failed: %#v", out)
+	}
+}
+
+func TestNormalizeRejectsInvalidEvidenceSemantics(t *testing.T) {
+	base := NewFinding("TF-X", "Title", "identity", SeverityLow, Observed, StatusPass, "condition")
+	for name, mutate := range map[string]func(*Finding){
+		"severity":       func(f *Finding) { f.Severity = "extreme" },
+		"classification": func(f *Finding) { f.Classification = "assumed" },
+		"status":         func(f *Finding) { f.Status = "secure" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			finding := base
+			mutate(&finding)
+			report := Report{SchemaVersion: SchemaVersion, Findings: []Finding{finding}}
+			if err := report.Normalize(); err == nil {
+				t.Fatalf("accepted invalid %s", name)
+			}
+		})
+	}
+}

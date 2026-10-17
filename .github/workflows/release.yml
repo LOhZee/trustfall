@@ -8,7 +8,23 @@ permissions:
   contents: read
 
 jobs:
+  validate-release:
+    if: ${{ !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require a semantic release tag
+        shell: bash
+        env:
+          VERSION: ${{ github.event.release.tag_name }}
+        run: |
+          [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "release tag must match vMAJOR.MINOR.PATCH" >&2
+            exit 1
+          }
+
   binaries:
+    needs: validate-release
     if: ${{ !github.event.release.prerelease }}
     strategy:
       matrix:
@@ -36,9 +52,9 @@ jobs:
           GOARCH: ${{ matrix.arch }}
           VERSION: ${{ github.event.release.tag_name }}
           COMMIT: ${{ github.sha }}
+          BUILD_DATE: ${{ github.event.release.published_at }}
         run: |
-          test "$VERSION" = "v${VERSION#v}"
-          CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags "-s -w -X main.version=$VERSION -X main.commit=$COMMIT" -o trustfall ./cmd/trustfall
+          CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags "-s -w -X main.version=$VERSION -X main.commit=$COMMIT -X main.buildDate=$BUILD_DATE" -o trustfall ./cmd/trustfall
           archive="trustfall_${VERSION#v}_${GOOS}_${GOARCH}.tar.gz"
           tar --sort=name --owner=0 --group=0 --numeric-owner --mtime='UTC 1970-01-01' -czf "$archive" trustfall
           sha256sum "$archive" > "$archive.sha256"
@@ -50,7 +66,34 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$VERSION" trustfall_*.tar.gz trustfall_*.sha256 --clobber
 
+  image-scan:
+    needs: validate-release
+    if: ${{ !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build amd64 release candidate without publishing
+        env:
+          VERSION: ${{ github.event.release.tag_name }}
+          COMMIT: ${{ github.sha }}
+        run: docker build --build-arg VERSION="$VERSION" --build-arg COMMIT="$COMMIT" --tag trustfall:release-candidate .
+      - name: Scan release candidate before publication
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.74.0
+          image-ref: trustfall:release-candidate
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
   image:
+    needs: image-scan
     if: ${{ !github.event.release.prerelease }}
     runs-on: ubuntu-latest
     environment: release
@@ -59,6 +102,8 @@ jobs:
       packages: write
       id-token: write
       attestations: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -76,21 +121,26 @@ jobs:
           context: .
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: ghcr.io/${{ github.repository_owner }}/trustfall:${{ github.event.release.tag_name }}
+          tags: ghcr.io/lohzee/trustfall:${{ github.event.release.tag_name }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/LOhZee/trustfall
+            org.opencontainers.image.revision=${{ github.sha }}
           build-args: |
             VERSION=${{ github.event.release.tag_name }}
             COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ github.event.release.published_at }}
           sbom: true
           provenance: mode=max
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-name: ghcr.io/${{ github.repository_owner }}/trustfall
+          subject-name: ghcr.io/lohzee/trustfall
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
       - name: Scan published image by digest
-        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: ghcr.io/${{ github.repository_owner }}/trustfall@${{ steps.build.outputs.digest }}
+          version: v0.74.0
+          image-ref: ghcr.io/lohzee/trustfall@${{ steps.build.outputs.digest }}
           format: table
           severity: HIGH,CRITICAL
           ignore-unfixed: true
@@ -112,6 +162,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ github.event.release.tag_name }}
+          IMAGE_DIGEST: ${{ needs.image.outputs.digest }}
         run: |
           if [[ ! "$VERSION" =~ ^v([0-9]+)\.[0-9]+\.[0-9]+$ ]]; then
             echo "release tag is not semantic: $VERSION" >&2
@@ -119,6 +170,8 @@ jobs:
           fi
           major="v${BASH_REMATCH[1]}"
           sha="$(git rev-list -n 1 "$VERSION^{commit}")"
+          printf 'ghcr.io/lohzee/trustfall@%s\n' "$IMAGE_DIGEST" > trustfall-image.txt
+          gh release upload "$VERSION" trustfall-image.txt --clobber
           if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$major" >/dev/null 2>&1; then
             gh api --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/$major" -f sha="$sha" -F force=true >/dev/null
           else

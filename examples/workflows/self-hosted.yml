@@ -6,7 +6,7 @@ jobs:
     runs-on: [self-hosted, linux, trustfall-approved]
     timeout-minutes: 20
     container:
-      image: ghcr.io/trustfall-ci/trustfall@sha256:REPLACE_WITH_RELEASE_DIGEST
+      image: ghcr.io/lohzee/trustfall@sha256:REPLACE_WITH_RELEASE_DIGEST
       options: --init --cap-drop=ALL --security-opt=no-new-privileges
     steps:
       - run: trustfall assess --profile hardened --no-network --output "$RUNNER_TEMP/report.json" --summary "$GITHUB_STEP_SUMMARY"

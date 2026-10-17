@@ -1,6 +1,6 @@
 name: TrustFall Runtime Assessment
 description: Assess the effective runtime trust boundaries of an existing GitHub Actions job
-author: TrustFall maintainers
+author: LOhZee
 branding:
   icon: shield
   color: purple
@@ -27,6 +27,18 @@ inputs:
     description: Disable network, metadata, OIDC retrieval, and cloud probes
     required: false
     default: "true"
+  timeout:
+    description: Per-probe timeout as a Go duration, from greater than zero through 5m
+    required: false
+    default: 5s
+  request-oidc:
+    description: Request a GitHub OIDC token; the caller job must explicitly grant id-token write
+    required: false
+    default: "false"
+  oidc-audience:
+    description: Audience for OIDC issuance when request-oidc is true
+    required: false
+    default: trustfall
   output:
     description: JSON report path
     required: false
@@ -42,6 +54,9 @@ outputs:
   sarif:
     description: Path to the generated SARIF report
     value: ${{ inputs.sarif }}
+  exit-code:
+    description: TrustFall exit code (0 audit success, 1 invocation/policy, 2 policy violation, 3 operational error)
+    value: ${{ steps.assess.outputs.exit_code }}
 runs:
   using: composite
   steps:
@@ -52,17 +67,39 @@ runs:
         TRUSTFALL_SHA256: ${{ inputs.sha256 }}
       run: "${GITHUB_ACTION_PATH}/scripts/install.sh \"${TRUSTFALL_VERSION}\" \"${TRUSTFALL_SHA256}\""
     - name: Assess current job runtime
+      id: assess
       shell: bash
       env:
         INPUT_PROFILE: ${{ inputs.profile }}
         INPUT_POLICY: ${{ inputs.policy }}
         INPUT_FAIL_ON: ${{ inputs['fail-on'] }}
         INPUT_NO_NETWORK: ${{ inputs['no-network'] }}
+        INPUT_TIMEOUT: ${{ inputs.timeout }}
+        INPUT_REQUEST_OIDC: ${{ inputs['request-oidc'] }}
+        INPUT_OIDC_AUDIENCE: ${{ inputs['oidc-audience'] }}
         INPUT_OUTPUT: ${{ inputs.output }}
         INPUT_SARIF: ${{ inputs.sarif }}
       run: |
-        args=(assess --profile "$INPUT_PROFILE" --output "$INPUT_OUTPUT" --sarif "$INPUT_SARIF" --summary "$GITHUB_STEP_SUMMARY")
+        fail_input() {
+          echo "$1" >&2
+          printf 'exit_code=1\n' >> "$GITHUB_OUTPUT"
+          exit 1
+        }
+        case "$INPUT_PROFILE" in baseline|hardened|custom) ;; *) fail_input "profile must be baseline, hardened, or custom" ;; esac
+        case "$INPUT_FAIL_ON" in ""|note|low|medium|high|critical) ;; *) fail_input "fail-on must be empty, note, low, medium, high, or critical" ;; esac
+        case "$INPUT_NO_NETWORK" in true|false) ;; *) fail_input "no-network must be true or false" ;; esac
+        case "$INPUT_REQUEST_OIDC" in true|false) ;; *) fail_input "request-oidc must be true or false" ;; esac
+        if [[ "$INPUT_PROFILE" == custom && -z "$INPUT_POLICY" ]]; then fail_input "custom profile requires a policy path"; fi
+        if [[ "$INPUT_PROFILE" != custom && -n "$INPUT_POLICY" ]]; then fail_input "policy is accepted only with the custom profile"; fi
+        if [[ "$INPUT_REQUEST_OIDC" == true && "$INPUT_NO_NETWORK" == true ]]; then fail_input "request-oidc=true is incompatible with no-network=true"; fi
+        args=(assess --profile "$INPUT_PROFILE" --timeout "$INPUT_TIMEOUT" --output "$INPUT_OUTPUT" --sarif "$INPUT_SARIF" --summary "$GITHUB_STEP_SUMMARY")
         if [[ -n "$INPUT_POLICY" ]]; then args+=(--policy "$INPUT_POLICY"); fi
         if [[ -n "$INPUT_FAIL_ON" ]]; then args+=(--fail-on "$INPUT_FAIL_ON"); fi
         if [[ "$INPUT_NO_NETWORK" == "true" ]]; then args+=(--no-network); fi
+        if [[ "$INPUT_REQUEST_OIDC" == "true" ]]; then args+=(--request-oidc --oidc-audience "$INPUT_OIDC_AUDIENCE"); fi
+        set +e
         trustfall "${args[@]}"
+        status=$?
+        set -e
+        printf 'exit_code=%s\n' "$status" >> "$GITHUB_OUTPUT"
+        exit "$status"

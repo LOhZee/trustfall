@@ -1,0 +1,49 @@
+# Runtime validation
+
+Local tests can validate the engine, schemas, policy behavior and OCI build mechanics. They cannot prove that GitHub's hosted runner successfully started a `jobs.<job_id>.container` job. TrustFall therefore keeps hosted runtime evidence separate from local evidence.
+
+## Hosted validation workflow
+
+[`runtime-validation.yml`](../.github/workflows/runtime-validation.yml) is manual-only. It deliberately publishes a commit-scoped, non-release `linux/amd64` image to GHCR, captures the immutable digest, and uses that digest for every subsequent container job in the run. It does not create a GitHub Release or move a version tag.
+
+The matrix checks:
+
+| Scenario | Hosted assertion |
+|---|---|
+| Default container | Shell, CLI, runner temp, step-output and job-summary interfaces work; audit completes and artifacts upload. |
+| Hardened container | The same baseline assessment runs with capability dropping and no-new-privileges, producing separately comparable evidence. |
+| No OIDC permission | An attempted issuance is visible as unknown, not secure or verified. |
+| OIDC-enabled | Token issuance succeeds and selected issuer, audience, subject and temporal claims pass local semantic validation; the raw JWT is discarded. |
+| Network disabled | Network-capable probes remain visible as disabled/unknown evidence. |
+| Enforcement | A deliberately mismatched expectation returns exit code 2. |
+| Malformed policy | Strict decoding returns exit code 1. |
+| Reports | JSON and SARIF are generated and uploaded; comparison uses the two actual runtime reports. |
+
+Run it only after reviewing the commit because the build job has `packages: write`:
+
+```sh
+gh workflow run runtime-validation.yml --repo LOhZee/trustfall --ref main
+gh run list --repo LOhZee/trustfall --workflow runtime-validation.yml --limit 1
+gh run watch RUN_ID --repo LOhZee/trustfall --exit-status
+gh run view RUN_ID --repo LOhZee/trustfall --log
+```
+
+The workflow refuses package-writing dispatches from any ref other than `refs/heads/main`; verify the run's commit SHA before relying on it. Download and retain the artifacts with the run URL. A successful run proves execution for that commit, image digest, hosted-runner generation and point in time only. It does not establish universal isolation or public anonymous pull access.
+
+## Current publication dependency
+
+The preferred reusable workflows require an immutable `ghcr.io/lohzee/trustfall@sha256:...` input. Before the first public release there is no release digest to embed or recommend. Do not replace it with `latest`, a tag, or a placeholder in an executable production workflow.
+
+After a validated release:
+
+1. Copy `trustfall-image.txt` from the release assets.
+2. Verify that its digest matches the GHCR manifest and the build attestation.
+3. Confirm anonymous pull access from a clean environment if the package is intended for public reusable-workflow consumers.
+4. Set `TRUSTFALL_INTEGRATION_IMAGE` to that digest and dispatch `container-integration.yml`.
+5. Record both hosted run URLs in the release notes.
+
+## Evidence status
+
+The repository's [initial CI run](https://github.com/LOhZee/trustfall/actions/runs/39027368144) demonstrated a hosted Go test and a local Docker build/smoke test, but it failed during vulnerability-scanner setup and did not contain a GitHub Actions container job. It must not be cited as hosted container-job validation. Update this document only with actual run URLs and outcomes; use `NOT TESTED` or `BLOCKED` while evidence is absent.
+
+During the 2026-10-17 readiness work, `go test ./...`, `go vet ./...`, actionlint, CLI build, policy/exit tests, and report validation against the project schemas and official OASIS SARIF 2.1.0 schema succeeded locally. Two environment limitations remained: local Docker daemon access was denied at `/var/run/docker.sock`, and the local Linux/arm64 race runtime stopped before tests with `ThreadSanitizer: unsupported VMA range`. These are `BLOCKED` local checks, not product passes or failures; the hosted amd64 CI race test remains authoritative for that platform.

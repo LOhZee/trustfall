@@ -69,13 +69,23 @@ type Finding struct {
 }
 
 type RunMetadata struct {
-	ID            string    `json:"id"`
-	StartedAt     time.Time `json:"started_at"`
-	CompletedAt   time.Time `json:"completed_at"`
-	Profile       string    `json:"profile"`
-	PolicyMode    string    `json:"policy_mode"`
-	NetworkDenied bool      `json:"network_denied"`
-	ToolVersion   string    `json:"tool_version"`
+	ID            string         `json:"id"`
+	StartedAt     time.Time      `json:"started_at"`
+	CompletedAt   time.Time      `json:"completed_at"`
+	Profile       string         `json:"profile"`
+	PolicyMode    string         `json:"policy_mode"`
+	NetworkDenied bool           `json:"network_denied"`
+	ToolVersion   string         `json:"tool_version"`
+	Runtime       RuntimeContext `json:"runtime"`
+}
+
+type RuntimeContext struct {
+	Repository        string `json:"repository,omitempty"`
+	WorkflowRef       string `json:"workflow_ref,omitempty"`
+	RunnerEnvironment string `json:"runner_environment,omitempty"`
+	RunnerOS          string `json:"runner_os,omitempty"`
+	RunnerArch        string `json:"runner_arch,omitempty"`
+	ContainerImage    string `json:"container_image,omitempty"`
 }
 
 type Report struct {
@@ -111,16 +121,30 @@ func (r *Report) Normalize() error {
 		r.Tool = "trustfall"
 	}
 	for i := range r.Findings {
-		if r.Findings[i].RuleID == "" || r.Findings[i].Module == "" {
+		finding := &r.Findings[i]
+		if finding.RuleID == "" || finding.Module == "" {
 			return fmt.Errorf("finding %d is missing rule_id or module", i)
 		}
-		r.Findings[i].Evidence = RedactMap(r.Findings[i].Evidence)
-		r.Findings[i].Title = RedactString(r.Findings[i].Title)
-		r.Findings[i].Observed = RedactString(r.Findings[i].Observed)
-		r.Findings[i].Expected = RedactString(r.Findings[i].Expected)
-		r.Findings[i].Implications = RedactString(r.Findings[i].Implications)
-		r.Findings[i].Remediation = RedactString(r.Findings[i].Remediation)
-		r.Findings[i].Fingerprint = Fingerprint(r.Findings[i])
+		if SeverityRank(finding.Severity) == 0 {
+			return fmt.Errorf("finding %d has invalid severity %q", i, finding.Severity)
+		}
+		switch finding.Classification {
+		case Observed, Verified, Inferred, Unknown:
+		default:
+			return fmt.Errorf("finding %d has invalid evidence classification %q", i, finding.Classification)
+		}
+		switch finding.Status {
+		case StatusPass, StatusFail, StatusInfo, StatusUnknown, StatusNotApplicable:
+		default:
+			return fmt.Errorf("finding %d has invalid status %q", i, finding.Status)
+		}
+		finding.Evidence = RedactMap(finding.Evidence)
+		finding.Title = RedactString(finding.Title)
+		finding.Observed = RedactString(finding.Observed)
+		finding.Expected = RedactString(finding.Expected)
+		finding.Implications = RedactString(finding.Implications)
+		finding.Remediation = RedactString(finding.Remediation)
+		finding.Fingerprint = Fingerprint(*finding)
 	}
 	sort.SliceStable(r.Findings, func(i, j int) bool {
 		if r.Findings[i].RuleID == r.Findings[j].RuleID {

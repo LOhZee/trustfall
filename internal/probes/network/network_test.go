@@ -3,11 +3,12 @@ package network
 import (
 	"context"
 	"errors"
-	"github.com/trustfall-ci/trustfall/internal/engine"
-	"github.com/trustfall-ci/trustfall/internal/evidence"
-	"github.com/trustfall-ci/trustfall/internal/policy"
+	"github.com/LOhZee/trustfall/internal/engine"
+	"github.com/LOhZee/trustfall/internal/evidence"
+	"github.com/LOhZee/trustfall/internal/policy"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -40,6 +41,19 @@ func TestPermissionDeniedIsUnknown(t *testing.T) {
 	findings, _ := (Probe{Targets: []policy.NetworkTarget{{Name: "allowed", Type: "https", Address: "https://example.com"}}, Client: client}).Run(context.Background(), engine.Config{})
 	if findings[0].Status != evidence.StatusUnknown {
 		t.Fatalf("got %+v", findings[0])
+	}
+}
+
+func TestHTTPDenialVerifiesReachabilityNotAuthentication(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusForbidden, Body: io.NopCloser(strings.NewReader("denied")), Header: make(http.Header), Request: r}, nil
+	})}
+	findings, err := (Probe{Targets: []policy.NetworkTarget{{Name: "allowed", Type: "https", Address: "https://example.com"}}, Client: client}).Run(context.Background(), engine.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if findings[0].Classification != evidence.Verified || findings[0].Status != evidence.StatusInfo {
+		t.Fatalf("HTTP response did not remain a reachability-only result: %+v", findings[0])
 	}
 }
 

@@ -14,9 +14,21 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     -o /out/trustfall ./cmd/trustfall
 
 FROM debian:bookworm-20261005-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_DATE=unknown
+LABEL org.opencontainers.image.title="TrustFall" \
+      org.opencontainers.image.description="GitHub Actions runtime trust-boundary assessment" \
+      org.opencontainers.image.source="https://github.com/LOhZee/trustfall" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${COMMIT}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.licenses="Apache-2.0"
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build /out/trustfall /usr/local/bin/trustfall
-RUN useradd --no-create-home --uid 1001 --user-group --shell /usr/sbin/nologin trustfall
+RUN useradd --no-create-home --uid 1001 --user-group --shell /usr/sbin/nologin trustfall \
+    && mkdir -p /work \
+    && chown trustfall:trustfall /work
 USER 1001:1001
 WORKDIR /work
 ENTRYPOINT ["/usr/local/bin/trustfall"]

@@ -9,20 +9,46 @@ permissions:
   contents: read
 
 jobs:
+  configuration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      image: ${{ steps.validate.outputs.image }}
+    steps:
+      - id: validate
+        name: Require a published immutable image
+        shell: bash
+        env:
+          IMAGE: ${{ vars.TRUSTFALL_INTEGRATION_IMAGE }}
+        run: |
+          if [[ ! "$IMAGE" =~ ^ghcr\.io/lohzee/trustfall@sha256:[a-f0-9]{64}$ ]]; then
+            echo "TRUSTFALL_INTEGRATION_IMAGE must be configured as the published immutable ghcr.io/lohzee/trustfall digest" >&2
+            exit 1
+          fi
+          printf 'image=%s\n' "$IMAGE" >> "$GITHUB_OUTPUT"
+
   scanner:
-    if: ${{ vars.TRUSTFALL_INTEGRATION_IMAGE != '' }}
+    needs: configuration
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
-      # Configure this repository variable as an immutable ghcr.io/...@sha256:... reference.
-      image: ${{ vars.TRUSTFALL_INTEGRATION_IMAGE }}
+      # This intentionally has no registry credentials: it also verifies public pull access.
+      image: ${{ needs.configuration.outputs.image }}
       options: --init --cap-drop=ALL --security-opt=no-new-privileges
+    env:
+      TRUSTFALL_CONTAINER_IMAGE: ${{ needs.configuration.outputs.image }}
     steps:
       - name: Verify genuine container-job execution
         shell: sh
         run: |
+          set -eu
+          command -v trustfall >/dev/null
+          test -x /bin/sh
+          test -d "$RUNNER_TEMP" && test -w "$RUNNER_TEMP"
+          : >> "$GITHUB_OUTPUT"
+          : >> "$GITHUB_STEP_SUMMARY"
           trustfall doctor
-          trustfall assess --profile hardened --no-network --output "$RUNNER_TEMP/report.json" --sarif "$RUNNER_TEMP/report.sarif" --summary "$GITHUB_STEP_SUMMARY"
+          trustfall assess --profile baseline --no-network --output "$RUNNER_TEMP/report.json" --sarif "$RUNNER_TEMP/report.sarif" --summary "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: trustfall-container-integration

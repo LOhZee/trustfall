@@ -11,16 +11,16 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/trustfall-ci/trustfall/internal/compare"
-	"github.com/trustfall-ci/trustfall/internal/engine"
-	"github.com/trustfall-ci/trustfall/internal/evidence"
-	"github.com/trustfall-ci/trustfall/internal/policy"
-	"github.com/trustfall-ci/trustfall/internal/probes/cloud"
-	"github.com/trustfall-ci/trustfall/internal/probes/credentials"
-	"github.com/trustfall-ci/trustfall/internal/probes/identity"
-	"github.com/trustfall-ci/trustfall/internal/probes/isolation"
-	"github.com/trustfall-ci/trustfall/internal/probes/network"
-	"github.com/trustfall-ci/trustfall/internal/reporting"
+	"github.com/LOhZee/trustfall/internal/compare"
+	"github.com/LOhZee/trustfall/internal/engine"
+	"github.com/LOhZee/trustfall/internal/evidence"
+	"github.com/LOhZee/trustfall/internal/policy"
+	"github.com/LOhZee/trustfall/internal/probes/cloud"
+	"github.com/LOhZee/trustfall/internal/probes/credentials"
+	"github.com/LOhZee/trustfall/internal/probes/identity"
+	"github.com/LOhZee/trustfall/internal/probes/isolation"
+	"github.com/LOhZee/trustfall/internal/probes/network"
+	"github.com/LOhZee/trustfall/internal/reporting"
 )
 
 var version = "dev"
@@ -59,7 +59,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 }
 func usage(w io.Writer) int {
-	fmt.Fprintln(w, "TrustFall — Your pipeline says it’s isolated. Let’s find out.\n\nUsage:\n  trustfall version [--json]\n  trustfall doctor\n  trustfall assess [--profile baseline|hardened|custom] [options]\n  trustfall compare [--output path] BASELINE.json CANDIDATE.json\n  trustfall validate --policy trustfall.yaml\n\nExit codes: 0 success/audit, 1 usage, 2 policy violation, 3 operational error")
+	fmt.Fprintln(w, "TrustFall — Your pipeline says it’s isolated. Let’s find out.\n\nUsage:\n  trustfall version [--json]\n  trustfall doctor\n  trustfall assess [--profile baseline|hardened|custom] [--request-oidc] [options]\n  trustfall compare [--output path] BASELINE.json CANDIDATE.json\n  trustfall validate --policy trustfall.yaml\n\nExit codes: 0 success/audit, 1 usage, 2 policy violation, 3 operational error")
 	return exitUsage
 }
 func newFlags(name string, stderr io.Writer) *flag.FlagSet {
@@ -120,6 +120,8 @@ func assessCommand(args []string, stdout, stderr io.Writer) int {
 	format := fs.String("format", "json", "json or text")
 	verbose := fs.Bool("verbose", false, "enable debug logs")
 	noNetwork := fs.Bool("no-network", false, "disable all network and cloud probes")
+	requestOIDC := fs.Bool("request-oidc", false, "request and inspect a GitHub Actions OIDC token")
+	oidcAudience := fs.String("oidc-audience", "", "OIDC audience (requires --request-oidc)")
 	if fs.Parse(args) != nil {
 		return exitUsage
 	}
@@ -127,8 +129,16 @@ func assessCommand(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "assess accepts no positional arguments")
 		return exitUsage
 	}
-	if *timeout <= 0 {
-		fmt.Fprintln(stderr, "--timeout must be positive")
+	if *timeout <= 0 || *timeout > 5*time.Minute {
+		fmt.Fprintln(stderr, "--timeout must be positive and no greater than 5m")
+		return exitUsage
+	}
+	if *oidcAudience != "" && !*requestOIDC {
+		fmt.Fprintln(stderr, "--oidc-audience requires --request-oidc")
+		return exitUsage
+	}
+	if len(*oidcAudience) > 255 {
+		fmt.Fprintln(stderr, "--oidc-audience must not exceed 255 characters")
 		return exitUsage
 	}
 	if *format != "json" && *format != "text" {
@@ -176,6 +186,12 @@ func assessCommand(args []string, stdout, stderr io.Writer) int {
 		}
 		pol.Mode = "enforce"
 		pol.FailOn = severity
+	}
+	if *requestOIDC {
+		pol.Identity.RequestOIDC = true
+		if *oidcAudience != "" {
+			pol.Identity.Audience = *oidcAudience
+		}
 	}
 	level := slog.LevelInfo
 	if *verbose {

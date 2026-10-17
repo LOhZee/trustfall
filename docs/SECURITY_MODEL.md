@@ -4,7 +4,7 @@
 
 TrustFall does not require a privileged container, added capabilities, host PID namespace, or a Docker/runtime socket. Baseline assessment is passive and defaults to no configured active destinations. The supplied reusable job drops all Linux capabilities and sets no-new-privileges.
 
-Secret values are out of scope for evidence. Credential environment variables are matched by name only. Known credential paths are `lstat`/access checked; contents are not opened. OIDC and Azure tokens live only in request-local memory, are never logged, hashed, persisted, placed in findings, or included in errors. The generic redactor additionally removes secret-like keys, URL userinfo and JWT-shaped strings before normalization.
+Secret values are out of scope for evidence. Credential-pattern environment variables are matched by name only. Known credential paths are `lstat`/access checked; contents are not opened and usability is not inferred from presence. OIDC and Azure tokens live only in request-local memory, are never logged, hashed, persisted, placed in findings, or included in errors. The generic redactor removes secret-like string values, URL userinfo and JWT-shaped strings before normalization while preserving boolean facility-presence markers.
 
 Network operations require exact policy targets. DNS performs one lookup, TCP one connection, and HTTPS one HEAD with at most three same-origin redirects. Concurrency is 1–16 and every probe has a deadline. Metadata probing is separately enabled and performs a fixed HEAD against provider endpoints, never reads its body, and never requests a credential path. Azure accepts only HTTPS `management.azure.com` GET/HEAD targets and does not record response bodies; it records status and provider error headers only. For an explicitly targeted role-assignment list operation, it may parse the bounded response solely to record an object count and discards all role fields.
 
@@ -12,7 +12,7 @@ Network operations require exact policy targets. DNS performs one lookup, TCP on
 
 Observed means local inspection occurred. Verified means the precise recorded operation was executed successfully or received a provider response. Inferred means available configuration suggests, but does not establish, access. Unknown means the operation was unavailable, refused, timed out, disabled, or otherwise insufficient. These classifications describe evidence strength; status describes comparison with an expected condition.
 
-A denied request is useful evidence about that request but is not universal proof of no access. TrustFall therefore keeps transport/permission failures unknown unless a provider returned a response for the exact operation. A successful endpoint connection does not imply authentication.
+A denied request is useful evidence about that request but is not universal proof of no access. TrustFall therefore keeps transport failures unknown; an authenticated provider denial is a verified outcome only for the exact operation and conditions recorded. A successful endpoint connection does not imply authentication. UID 0 inside a remapped user namespace is reported separately from host UID 0 and is never treated as proof of host-root access.
 
 ## Policy and exits
 

@@ -1,10 +1,11 @@
 package compare
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 
-	"github.com/trustfall-ci/trustfall/internal/evidence"
+	"github.com/LOhZee/trustfall/internal/evidence"
 )
 
 type Change struct {
@@ -21,13 +22,20 @@ type Snapshot struct {
 	Classification evidence.Classification `json:"evidence_classification"`
 	Severity       evidence.Severity       `json:"severity"`
 	Observed       string                  `json:"observed_condition"`
+	Evidence       map[string]any          `json:"evidence,omitempty"`
 }
 type Result struct {
-	SchemaVersion  string   `json:"schema_version"`
-	BaselineRunID  string   `json:"baseline_run_id"`
-	CandidateRunID string   `json:"candidate_run_id"`
-	Changes        []Change `json:"changes"`
-	Disclaimer     string   `json:"disclaimer"`
+	SchemaVersion  string            `json:"schema_version"`
+	BaselineRunID  string            `json:"baseline_run_id"`
+	CandidateRunID string            `json:"candidate_run_id"`
+	Context        ComparisonContext `json:"context"`
+	Changes        []Change          `json:"changes"`
+	Disclaimer     string            `json:"disclaimer"`
+}
+type ComparisonContext struct {
+	AssessmentDifferences []string `json:"assessment_differences"`
+	RuntimeDifferences    []string `json:"runtime_differences"`
+	RuntimeComparable     bool     `json:"runtime_comparable"`
 }
 
 func Reports(before, after evidence.Report) Result {
@@ -44,11 +52,11 @@ func Reports(before, after evidence.Report) Result {
 		ordered = append(ordered, k)
 	}
 	sort.Strings(ordered)
-	result := Result{SchemaVersion: "1.0.0", BaselineRunID: before.Run.ID, CandidateRunID: after.Run.ID, Changes: []Change{}, Disclaimer: "Differences are observational. TrustFall does not attribute causality to a configuration change without supporting evidence."}
+	result := Result{SchemaVersion: "1.0.0", BaselineRunID: before.Run.ID, CandidateRunID: after.Run.ID, Context: compareContext(before.Run, after.Run), Changes: []Change{}, Disclaimer: "Differences are observational. TrustFall does not attribute causality to a configuration change without supporting evidence."}
 	for _, k := range ordered {
 		a, aok := left[k]
 		b, bok := right[k]
-		if aok && bok && a.Status == b.Status && a.Classification == b.Classification && a.Observed == b.Observed && a.Severity == b.Severity {
+		if aok && bok && a.Status == b.Status && a.Classification == b.Classification && a.Observed == b.Observed && a.Severity == b.Severity && sameEvidence(a.Evidence, b.Evidence) {
 			continue
 		}
 		c := Change{Key: k}
@@ -62,21 +70,14 @@ func Reports(before, after evidence.Report) Result {
 		}
 		switch {
 		case !aok:
-			if b.Status == evidence.StatusFail && (b.Classification == evidence.Observed || b.Classification == evidence.Verified) {
-				c.Category = "new_exposure"
-				c.Note = "Candidate contains direct evidence of a failing exposure absent from the baseline report; verify equivalent probe coverage before calling it newly created."
-			} else {
-				c.Category = "new"
-				c.Note = "Finding appears only in the candidate report; this is not necessarily a newly created capability."
-			}
+			c.Category = "new_evidence"
+			c.Note = "Finding appears only in the candidate report. Missing baseline evidence cannot establish that the property or capability is newly exposed."
 		case !bok:
-			if a.Status == evidence.StatusFail && (a.Classification == evidence.Observed || a.Classification == evidence.Verified) {
-				c.Category = "removed_exposure"
-				c.Note = "A directly evidenced baseline exposure is absent from the candidate; verify equivalent probe coverage before treating it as removed."
-			} else {
-				c.Category = "removed"
-				c.Note = "Finding appears only in the baseline report; verify that the probe set was equivalent."
-			}
+			c.Category = "missing_evidence"
+			c.Note = "Finding appears only in the baseline report. Its absence from the candidate is not evidence that the property or capability was removed."
+		case a.Probe.Name != b.Probe.Name || a.Probe.Version != b.Probe.Version:
+			c.Category = "inconclusive"
+			c.Note = "Probe identity or version differs, so the results are not directly comparable."
 		case a.Classification == evidence.Unknown || b.Classification == evidence.Unknown || a.Status == evidence.StatusUnknown || b.Status == evidence.StatusUnknown:
 			c.Category = "inconclusive"
 			c.Note = "At least one side lacks conclusive evidence."
@@ -94,6 +95,44 @@ func Reports(before, after evidence.Report) Result {
 	}
 	return result
 }
+
+func compareContext(before, after evidence.RunMetadata) ComparisonContext {
+	c := ComparisonContext{AssessmentDifferences: []string{}, RuntimeDifferences: []string{}}
+	if before.Profile != after.Profile {
+		c.AssessmentDifferences = append(c.AssessmentDifferences, fmt.Sprintf("profile: %q -> %q", before.Profile, after.Profile))
+	}
+	if before.PolicyMode != after.PolicyMode {
+		c.AssessmentDifferences = append(c.AssessmentDifferences, fmt.Sprintf("policy_mode: %q -> %q", before.PolicyMode, after.PolicyMode))
+	}
+	if before.NetworkDenied != after.NetworkDenied {
+		c.AssessmentDifferences = append(c.AssessmentDifferences, fmt.Sprintf("network_denied: %t -> %t", before.NetworkDenied, after.NetworkDenied))
+	}
+	if before.ToolVersion != after.ToolVersion {
+		c.AssessmentDifferences = append(c.AssessmentDifferences, fmt.Sprintf("tool_version: %q -> %q", before.ToolVersion, after.ToolVersion))
+	}
+	runtimeFields := []struct{ name, before, after string }{
+		{"repository", before.Runtime.Repository, after.Runtime.Repository},
+		{"workflow_ref", before.Runtime.WorkflowRef, after.Runtime.WorkflowRef},
+		{"runner_environment", before.Runtime.RunnerEnvironment, after.Runtime.RunnerEnvironment},
+		{"runner_os", before.Runtime.RunnerOS, after.Runtime.RunnerOS},
+		{"runner_arch", before.Runtime.RunnerArch, after.Runtime.RunnerArch},
+		{"container_image", before.Runtime.ContainerImage, after.Runtime.ContainerImage},
+	}
+	complete := true
+	for _, field := range runtimeFields {
+		if field.before == "" || field.after == "" {
+			complete = false
+		}
+		if field.before != field.after {
+			c.RuntimeDifferences = append(c.RuntimeDifferences, fmt.Sprintf("%s: %q -> %q", field.name, field.before, field.after))
+		}
+	}
+	c.RuntimeComparable = complete && len(c.RuntimeDifferences) == 0
+	if !complete {
+		c.RuntimeDifferences = append(c.RuntimeDifferences, "runtime context is incomplete on one or both reports")
+	}
+	return c
+}
 func index(r evidence.Report) map[string]evidence.Finding {
 	m := map[string]evidence.Finding{}
 	for _, f := range r.Findings {
@@ -109,5 +148,11 @@ func index(r evidence.Report) map[string]evidence.Finding {
 	return m
 }
 func snapshot(f evidence.Finding) *Snapshot {
-	return &Snapshot{Status: f.Status, Classification: f.Classification, Severity: f.Severity, Observed: f.Observed}
+	return &Snapshot{Status: f.Status, Classification: f.Classification, Severity: f.Severity, Observed: f.Observed, Evidence: f.Evidence}
+}
+
+func sameEvidence(a, b map[string]any) bool {
+	left, errLeft := json.Marshal(a)
+	right, errRight := json.Marshal(b)
+	return errLeft == nil && errRight == nil && string(left) == string(right)
 }

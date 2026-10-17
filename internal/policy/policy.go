@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/trustfall-ci/trustfall/internal/evidence"
+	"github.com/LOhZee/trustfall/internal/evidence"
 	"gopkg.in/yaml.v3"
 )
 

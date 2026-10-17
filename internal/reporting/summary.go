@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/trustfall-ci/trustfall/internal/evidence"
+	"github.com/LOhZee/trustfall/internal/evidence"
 )
 
 func WriteSummary(w io.Writer, r evidence.Report, violations []string) error {

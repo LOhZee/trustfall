@@ -10,7 +10,7 @@ jobs:
       contents: read
       id-token: write # Additional authority: permits minting GitHub OIDC tokens in this job.
     container:
-      image: ghcr.io/trustfall-ci/trustfall@sha256:REPLACE_WITH_RELEASE_DIGEST
+      image: ghcr.io/lohzee/trustfall@sha256:REPLACE_WITH_RELEASE_DIGEST
       options: --init --cap-drop=ALL --security-opt=no-new-privileges
     env:
       AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}

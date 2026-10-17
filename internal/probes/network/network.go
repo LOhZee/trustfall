@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/trustfall-ci/trustfall/internal/engine"
-	"github.com/trustfall-ci/trustfall/internal/evidence"
-	"github.com/trustfall-ci/trustfall/internal/policy"
+	"github.com/LOhZee/trustfall/internal/engine"
+	"github.com/LOhZee/trustfall/internal/evidence"
+	"github.com/LOhZee/trustfall/internal/policy"
 )
 
 type Probe struct {

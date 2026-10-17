@@ -4,8 +4,8 @@ on: { pull_request: {} }
 permissions: { contents: read }
 jobs:
   trustfall:
-    uses: trustfall-ci/trustfall/.github/workflows/scan.yml@REPLACE_WITH_FULL_COMMIT_SHA
+    uses: LOhZee/trustfall/.github/workflows/scan.yml@REPLACE_WITH_FULL_COMMIT_SHA
     with:
-      image: ghcr.io/trustfall-ci/trustfall@sha256:REPLACE_WITH_RELEASE_DIGEST
+      image: ghcr.io/lohzee/trustfall@sha256:REPLACE_WITH_RELEASE_DIGEST
       profile: hardened
       no_network: true

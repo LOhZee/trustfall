@@ -5,7 +5,7 @@ import (
 	"io"
 	"sort"
 
-	"github.com/trustfall-ci/trustfall/internal/evidence"
+	"github.com/LOhZee/trustfall/internal/evidence"
 )
 
 type sarifLog struct {
@@ -67,7 +67,7 @@ func WriteSARIF(w io.Writer, r evidence.Report) error {
 	for _, id := range ids {
 		ordered = append(ordered, rules[id])
 	}
-	log := sarifLog{Version: "2.1.0", Schema: "https://json.schemastore.org/sarif-2.1.0.json", Runs: []sarifRun{{Tool: sarifTool{Driver: sarifDriver{Name: "TrustFall", Version: r.Run.ToolVersion, InformationURI: "https://github.com/trustfall-ci/trustfall", Rules: ordered}}, Results: results, Properties: map[string]any{"runtime_assessment": true, "source_locations_omitted": true, "report_schema_version": r.SchemaVersion}}}}
+	log := sarifLog{Version: "2.1.0", Schema: "https://json.schemastore.org/sarif-2.1.0.json", Runs: []sarifRun{{Tool: sarifTool{Driver: sarifDriver{Name: "TrustFall", Version: r.Run.ToolVersion, InformationURI: "https://github.com/LOhZee/trustfall", Rules: ordered}}, Results: results, Properties: map[string]any{"runtime_assessment": true, "source_locations_omitted": true, "report_schema_version": r.SchemaVersion}}}}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(log)

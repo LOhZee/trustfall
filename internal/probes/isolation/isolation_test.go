@@ -2,8 +2,8 @@ package isolation
 
 import (
 	"context"
-	"github.com/trustfall-ci/trustfall/internal/engine"
-	"github.com/trustfall-ci/trustfall/internal/evidence"
+	"github.com/LOhZee/trustfall/internal/engine"
+	"github.com/LOhZee/trustfall/internal/evidence"
 	"os"
 	"path/filepath"
 	"testing"
@@ -42,5 +42,63 @@ func TestFixtureStatus(t *testing.T) {
 	}
 	if findings[0].Status != evidence.StatusPass {
 		t.Fatalf("capabilities not pass: %+v", findings[0])
+	}
+}
+
+func TestMissingEffectiveCapabilitiesIsUnknown(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "self", "attr"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "self", "status"), []byte("CapPrm:\t0\nCapBnd:\t0\nSeccomp:\t2\nNoNewPrivs:\t1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(root, "self", "mountinfo"), nil, 0o600)
+	findings, err := (Probe{ProcRoot: root}).Run(context.Background(), engine.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if findings[0].Status != evidence.StatusUnknown || findings[0].Classification != evidence.Unknown {
+		t.Fatalf("missing capabilities became secure: %+v", findings[0])
+	}
+}
+
+func TestNoNewPrivilegesDisabledIsFailure(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "self", "attr"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "self", "status"), []byte("CapEff:\t0\nCapPrm:\t0\nCapBnd:\t0\nSeccomp:\t2\nNoNewPrivs:\t0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(root, "self", "mountinfo"), nil, 0o600)
+	findings, err := (Probe{ProcRoot: root}).Run(context.Background(), engine.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if findings[1].Status != evidence.StatusFail {
+		t.Fatalf("disabled no-new-privileges not reported: %+v", findings[1])
+	}
+}
+
+func TestUIDMappingDistinguishesRemappedRoot(t *testing.T) {
+	if mapsHost, valid := uidZeroMapsToHostZero("0 100000 65536"); !valid || mapsHost {
+		t.Fatalf("remapped UID 0 misclassified: mapsHost=%t valid=%t", mapsHost, valid)
+	}
+	if mapsHost, valid := uidZeroMapsToHostZero("0 0 4294967295"); !valid || !mapsHost {
+		t.Fatalf("initial mapping misclassified: mapsHost=%t valid=%t", mapsHost, valid)
+	}
+}
+
+func TestPermissionDeniedHostResourceIsUnknown(t *testing.T) {
+	finding := sensitiveHostResourceFinding([]string{"/denied"}, func(string) (os.FileInfo, error) {
+		return nil, os.ErrPermission
+	})
+	if finding.Status != evidence.StatusUnknown || finding.Classification != evidence.Unknown {
+		t.Fatalf("permission denial became a secure result: %+v", finding)
+	}
+	paths, ok := finding.Evidence["uninspectable_paths"].([]string)
+	if !ok || len(paths) != 1 || paths[0] != "/denied" {
+		t.Fatalf("permission-denied evidence missing: %#v", finding.Evidence)
 	}
 }

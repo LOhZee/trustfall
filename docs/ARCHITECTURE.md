@@ -4,7 +4,7 @@ TrustFall separates evidence collection from judgment. A probe returns facts wit
 
 ## Components
 
-`cmd/trustfall` is a thin command/exit-code layer. `internal/engine` runs registered probes under individual deadlines and converts incomplete probes to unknown evidence. `internal/evidence` owns the versioned model, ordering, fingerprints and mandatory redaction. Probe packages contain no policy decisions beyond describing the risk of their own observed condition. `internal/policy` strict-decodes YAML, validates active target boundaries and evaluates explicit expectations. Reporting produces JSON, SARIF and a job summary from the same normalized report. Comparison matches stable rule/target identities and describes differences without causal attribution.
+`cmd/trustfall` is a thin command/exit-code layer. `internal/engine` runs registered probes under individual deadlines and converts incomplete probes to unknown evidence. `internal/evidence` owns the versioned model, ordering, fingerprints and mandatory redaction. Probe packages contain no policy decisions beyond describing the risk of their own observed condition. `internal/policy` strict-decodes YAML, validates active target boundaries and evaluates explicit expectations. Reporting produces JSON, SARIF and a job summary from the same normalized report. Comparison matches stable rule/target identities, compares redacted supporting evidence, exposes assessment/runtime context differences, and describes differences without causal attribution. A finding missing from one report is `new_evidence` or `missing_evidence`, never proof that a capability appeared or disappeared.
 
 The engine runs passive probes first and active network/cloud probes afterward. `--no-network` prevents network-marked probes from running at the engine boundary, so a provider implementation cannot accidentally bypass it.
 
@@ -18,7 +18,7 @@ Stable rules describe one security property. Multi-target operations add the pol
 
 The CLI treats the process environment, procfs, mounts, policy file, DNS, remote endpoints and provider responses as untrusted input. It limits policy files and HTTP bodies to 1 MiB, never records token responses, follows no cloud redirects, restricts HTTPS redirects to the original origin for generic probes, and restricts Azure targets to `management.azure.com` GET/HEAD operations.
 
-The reusable workflow owns a real GitHub container job. The composite Marketplace action runs inside the caller’s already-created job and therefore cannot assess a boundary it did not create. This is a GitHub Actions platform distinction, not an implementation detail.
+The passive and OIDC-enabled reusable workflows each own a real GitHub container job. Their permissions are statically distinct because a running job cannot elevate itself to `id-token: write`. The composite Marketplace action runs inside the caller’s already-created job and therefore cannot assess a boundary it did not create. This is a GitHub Actions platform distinction, not an implementation detail.
 
 ## Deliberate limitations
 

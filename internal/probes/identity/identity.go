@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/trustfall-ci/trustfall/internal/engine"
-	"github.com/trustfall-ci/trustfall/internal/evidence"
+	"github.com/LOhZee/trustfall/internal/engine"
+	"github.com/LOhZee/trustfall/internal/evidence"
 )
 
 type Probe struct{ Client *http.Client }
@@ -31,10 +31,15 @@ func (p Probe) Run(ctx context.Context, cfg engine.Config) ([]evidence.Finding, 
 	if err == nil {
 		username = usr.Username
 	}
-	f := evidence.NewFinding("TF-ID-001", "Effective process identity", "identity", evidence.SeverityNote, evidence.Observed, evidence.StatusInfo, fmt.Sprintf("process runs as uid=%d gid=%d", uid, gid))
-	f.Implications = "The process identity determines direct filesystem and kernel-interface access inside the job container."
+	uidMap := inspectUIDMap("/proc/self/uid_map")
+	observedIdentity := fmt.Sprintf("process runs as uid=%d gid=%d", uid, gid)
+	if uid == 0 && uidMap.Available && !uidMap.UIDZeroMapsToHostZero {
+		observedIdentity += " with uid 0 remapped by a user namespace"
+	}
+	f := evidence.NewFinding("TF-ID-001", "Effective process identity", "identity", evidence.SeverityNote, evidence.Observed, evidence.StatusPass, observedIdentity)
+	f.Implications = "The process identity determines direct access inside the job container. UID 0 in a remapped user namespace is not equivalent to host UID 0, and neither condition alone proves host access."
 	f.Remediation = "Use a non-root image user where the workload does not require root."
-	f.Evidence = map[string]any{"uid": uid, "gid": gid, "username": username, "root": uid == 0}
+	f.Evidence = map[string]any{"uid": uid, "gid": gid, "username": username, "uid_zero": uid == 0, "uid_map_available": uidMap.Available, "uid_zero_maps_to_host_uid_zero": uidMap.UIDZeroMapsToHostZero}
 	if uid == 0 {
 		f.Severity, f.Status = evidence.SeverityMedium, evidence.StatusFail
 	}
@@ -67,6 +72,7 @@ func (p Probe) Run(ctx context.Context, cfg engine.Config) ([]evidence.Finding, 
 	result := []evidence.Finding{f, gm, fac}
 	requestOIDC, _ := cfg.Options["request_oidc"].(bool)
 	if !requestOIDC {
+		result = append(result, oidcNotTested())
 		return result, nil
 	}
 	if cfg.NoNetwork {
@@ -77,17 +83,32 @@ func (p Probe) Run(ctx context.Context, cfg engine.Config) ([]evidence.Finding, 
 		result = append(result, oidcUnknown("OIDC request facilities are absent; id-token: write may not be granted"))
 		return result, nil
 	}
-	claims, err := p.requestClaims(ctx, optionString(cfg.Options, "oidc_audience", "trustfall"))
+	audience := optionString(cfg.Options, "oidc_audience", "trustfall")
+	claims, validationErrors, err := p.requestClaims(ctx, audience)
 	if err != nil {
 		result = append(result, oidcUnknown("OIDC claim retrieval failed: "+evidence.SafeError(err)))
 		return result, nil
 	}
-	cf := evidence.NewFinding("TF-ID-004", "OIDC identity claims", "identity", evidence.SeverityLow, evidence.Verified, evidence.StatusInfo, "GitHub OIDC token issuance succeeded and selected claims were decoded locally")
-	cf.Implications = "This verifies token issuance for the requested audience, not access to any cloud resource."
+	cf := evidence.NewFinding("TF-ID-004", "OIDC identity claims", "identity", evidence.SeverityLow, evidence.Verified, evidence.StatusPass, "GitHub OIDC token issuance succeeded and selected claims passed local semantic validation")
+	cf.Implications = "This verifies token issuance and locally validates selected claims for the requested audience. TrustFall does not independently verify the JWT signature, and issuance does not prove cloud federation or resource access."
 	cf.Remediation = "Constrain federated trust by repository, ref or protected environment, audience, and workflow identity."
 	cf.Evidence = claims
+	if len(validationErrors) > 0 {
+		cf.Severity = evidence.SeverityMedium
+		cf.Status = evidence.StatusFail
+		cf.Observed = "GitHub OIDC token issuance succeeded, but selected claims failed local semantic validation"
+		cf.Evidence["claim_validation_errors"] = validationErrors
+	}
 	result = append(result, cf)
 	return result, nil
+}
+
+func oidcNotTested() evidence.Finding {
+	f := evidence.NewFinding("TF-ID-004", "OIDC identity claims", "identity", evidence.SeverityNote, evidence.Unknown, evidence.StatusNotApplicable, "OIDC token issuance was not requested in passive assessment mode")
+	f.Implications = "The environment-variable check describes whether request facilities are present, but no conclusion can be drawn about token issuance, claim contents, cloud federation, or downstream access."
+	f.Remediation = "Use the explicitly OIDC-enabled workflow only for an authorised identity assessment."
+	f.Evidence = map[string]any{"token_requested": false, "raw_token_recorded": false}
+	return f
 }
 
 func oidcUnknown(msg string) evidence.Finding {
@@ -104,17 +125,17 @@ func optionString(m map[string]any, key, fallback string) string {
 	return fallback
 }
 
-func (p Probe) requestClaims(ctx context.Context, audience string) (map[string]any, error) {
+func (p Probe) requestClaims(ctx context.Context, audience string) (map[string]any, []string, error) {
 	endpoint, err := url.Parse(os.Getenv("ACTIONS_ID_TOKEN_REQUEST_URL"))
-	if err != nil {
-		return nil, fmt.Errorf("invalid OIDC endpoint")
+	if err != nil || endpoint.Scheme != "https" || endpoint.User != nil || !isGitHubOIDCHost(endpoint.Hostname()) {
+		return nil, nil, fmt.Errorf("invalid or untrusted OIDC endpoint")
 	}
 	q := endpoint.Query()
 	q.Set("audience", audience)
 	endpoint.RawQuery = q.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+os.Getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN"))
 	client := p.Client
@@ -123,30 +144,30 @@ func (p Probe) requestClaims(ctx context.Context, audience string) (map[string]a
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		io.CopyN(io.Discard, resp.Body, 4096)
-		return nil, fmt.Errorf("OIDC endpoint returned HTTP %d", resp.StatusCode)
+		return nil, nil, fmt.Errorf("OIDC endpoint returned HTTP %d", resp.StatusCode)
 	}
 	var payload struct {
 		Value string `json:"value"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
-		return nil, fmt.Errorf("decode OIDC response: %w", err)
+		return nil, nil, fmt.Errorf("decode OIDC response: %w", err)
 	}
 	parts := strings.Split(payload.Value, ".")
 	if len(parts) != 3 {
-		return nil, fmt.Errorf("OIDC response was not a JWT")
+		return nil, nil, fmt.Errorf("OIDC response was not a JWT")
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
-		return nil, fmt.Errorf("decode JWT claims")
+		return nil, nil, fmt.Errorf("decode JWT claims")
 	}
 	var all map[string]any
 	if err := json.Unmarshal(raw, &all); err != nil {
-		return nil, fmt.Errorf("parse JWT claims")
+		return nil, nil, fmt.Errorf("parse JWT claims")
 	}
 	selected := map[string]any{}
 	for _, k := range []string{"iss", "aud", "sub", "repository", "repository_id", "repository_owner", "repository_visibility", "ref", "ref_type", "environment", "workflow", "job_workflow_ref", "runner_environment", "actor", "event_name", "iat", "nbf", "exp"} {
@@ -161,8 +182,116 @@ func (p Probe) requestClaims(ctx context.Context, audience string) (map[string]a
 		selected["expires_at"] = time.Unix(exp, 0).UTC().Format(time.RFC3339)
 	}
 	selected["signature_verified"] = false
+	selected["requested_audience"] = audience
 	selected["claim_handling"] = "decoded locally; raw token discarded"
-	return selected, nil
+	validationErrors := validateClaims(all, audience, time.Now())
+	selected["issuer_valid"] = !contains(validationErrors, "issuer is not GitHub Actions")
+	selected["audience_valid"] = !contains(validationErrors, "audience does not contain the requested value")
+	selected["subject_present"] = !contains(validationErrors, "subject is absent")
+	selected["temporal_claims_valid"] = !hasTemporalError(validationErrors)
+	selected["raw_token_recorded"] = false
+	return selected, validationErrors, nil
+}
+
+type uidMapEvidence struct {
+	Available             bool
+	UIDZeroMapsToHostZero bool
+}
+
+func inspectUIDMap(path string) uidMapEvidence {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return uidMapEvidence{}
+	}
+	fields := strings.Fields(string(b))
+	if len(fields) < 3 {
+		return uidMapEvidence{}
+	}
+	containerID, err1 := strconv.ParseUint(fields[0], 10, 64)
+	hostID, err2 := strconv.ParseUint(fields[1], 10, 64)
+	length, err3 := strconv.ParseUint(fields[2], 10, 64)
+	if err1 != nil || err2 != nil || err3 != nil || length == 0 {
+		return uidMapEvidence{}
+	}
+	return uidMapEvidence{Available: true, UIDZeroMapsToHostZero: containerID == 0 && hostID == 0}
+}
+
+func isGitHubOIDCHost(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	return host == "actions.githubusercontent.com" || strings.HasSuffix(host, ".actions.githubusercontent.com")
+}
+
+func validateClaims(claims map[string]any, audience string, now time.Time) []string {
+	var problems []string
+	if iss, _ := claims["iss"].(string); iss != "https://token.actions.githubusercontent.com" {
+		problems = append(problems, "issuer is not GitHub Actions")
+	}
+	if !audienceContains(claims["aud"], audience) {
+		problems = append(problems, "audience does not contain the requested value")
+	}
+	if sub, _ := claims["sub"].(string); strings.TrimSpace(sub) == "" {
+		problems = append(problems, "subject is absent")
+	}
+	iat, iatOK := number(claims["iat"])
+	nbf, nbfOK := number(claims["nbf"])
+	exp, expOK := number(claims["exp"])
+	if !iatOK || !nbfOK || !expOK {
+		problems = append(problems, "temporal claims are incomplete")
+		return problems
+	}
+	nowUnix := now.Unix()
+	const skew = int64(60)
+	if iat > nowUnix+skew {
+		problems = append(problems, "issued-at time is in the future")
+	}
+	if nbf > nowUnix+skew {
+		problems = append(problems, "not-before time is in the future")
+	}
+	if exp <= nowUnix-skew {
+		problems = append(problems, "token is expired")
+	}
+	if exp <= iat {
+		problems = append(problems, "expiration does not follow issued-at time")
+	}
+	return problems
+}
+
+func audienceContains(value any, expected string) bool {
+	switch v := value.(type) {
+	case string:
+		return v == expected
+	case []any:
+		for _, item := range v {
+			if s, ok := item.(string); ok && s == expected {
+				return true
+			}
+		}
+	case []string:
+		for _, item := range v {
+			if item == expected {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func contains(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func hasTemporalError(values []string) bool {
+	for _, value := range values {
+		if strings.Contains(value, "time") || strings.Contains(value, "temporal") || strings.Contains(value, "expired") {
+			return true
+		}
+	}
+	return false
 }
 
 func number(v any) (int64, bool) {

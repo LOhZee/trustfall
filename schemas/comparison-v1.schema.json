@@ -3,12 +3,22 @@
   "$id": "https://trustfall.dev/schemas/comparison-v1.schema.json",
   "title": "TrustFall comparison v1",
   "type": "object",
-  "required": ["schema_version", "baseline_run_id", "candidate_run_id", "changes", "disclaimer"],
+  "required": ["schema_version", "baseline_run_id", "candidate_run_id", "context", "changes", "disclaimer"],
   "properties": {
     "schema_version": { "const": "1.0.0" },
     "baseline_run_id": { "type": "string" },
     "candidate_run_id": { "type": "string" },
     "disclaimer": { "type": "string", "minLength": 1 },
+    "context": {
+      "type": "object",
+      "required": ["assessment_differences", "runtime_differences", "runtime_comparable"],
+      "properties": {
+        "assessment_differences": { "type": "array", "items": { "type": "string" } },
+        "runtime_differences": { "type": "array", "items": { "type": "string" } },
+        "runtime_comparable": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
     "changes": {
       "type": "array",
       "items": {
@@ -18,7 +28,7 @@
           "key": { "type": "string" },
           "rule_id": { "type": "string" },
           "title": { "type": "string" },
-          "category": { "enum": ["new", "new_exposure", "removed", "removed_exposure", "changed", "regression", "improvement", "inconclusive"] },
+          "category": { "enum": ["new_evidence", "missing_evidence", "changed", "regression", "improvement", "inconclusive"] },
           "before": { "$ref": "#/$defs/snapshot" },
           "after": { "$ref": "#/$defs/snapshot" },
           "note": { "type": "string" }
@@ -36,7 +46,8 @@
         "status": { "enum": ["pass", "fail", "informational", "unknown", "not_applicable"] },
         "evidence_classification": { "enum": ["observed", "verified", "inferred", "unknown"] },
         "severity": { "enum": ["note", "low", "medium", "high", "critical", ""] },
-        "observed_condition": { "type": "string" }
+        "observed_condition": { "type": "string" },
+        "evidence": { "type": "object" }
       },
       "additionalProperties": false
     }

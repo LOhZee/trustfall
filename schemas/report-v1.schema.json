@@ -11,7 +11,7 @@
     "run": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "started_at", "completed_at", "profile", "policy_mode", "network_denied", "tool_version"],
+      "required": ["id", "started_at", "completed_at", "profile", "policy_mode", "network_denied", "tool_version", "runtime"],
       "properties": {
         "id": { "type": "string", "minLength": 1 },
         "started_at": { "type": "string", "format": "date-time" },
@@ -19,7 +19,19 @@
         "profile": { "type": "string" },
         "policy_mode": { "enum": ["audit", "enforce"] },
         "network_denied": { "type": "boolean" },
-        "tool_version": { "type": "string" }
+        "tool_version": { "type": "string" },
+        "runtime": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "repository": { "type": "string" },
+            "workflow_ref": { "type": "string" },
+            "runner_environment": { "type": "string" },
+            "runner_os": { "type": "string" },
+            "runner_arch": { "type": "string" },
+            "container_image": { "type": "string" }
+          }
+        }
       }
     },
     "findings": {

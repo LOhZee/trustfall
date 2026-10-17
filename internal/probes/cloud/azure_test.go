@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/trustfall-ci/trustfall/internal/evidence"
-	"github.com/trustfall-ci/trustfall/internal/policy"
+	"github.com/LOhZee/trustfall/internal/evidence"
+	"github.com/LOhZee/trustfall/internal/policy"
 )
 
 type azureRoundTrip func(*http.Request) (*http.Response, error)
@@ -18,12 +18,12 @@ func (f azureRoundTrip) RoundTrip(r *http.Request) (*http.Response, error) { ret
 func TestAzureRecordsDeniedOperationWithoutResponseBody(t *testing.T) {
 	t.Setenv("AZURE_TENANT_ID", "00000000-0000-0000-0000-000000000001")
 	t.Setenv("AZURE_CLIENT_ID", "00000000-0000-0000-0000-000000000002")
-	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://oidc.example/token")
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://vstoken.actions.githubusercontent.com/token")
 	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "request-secret")
 	client := &http.Client{Transport: azureRoundTrip(func(r *http.Request) (*http.Response, error) {
 		response := &http.Response{Request: r, Header: make(http.Header)}
 		switch r.URL.Hostname() {
-		case "oidc.example":
+		case "vstoken.actions.githubusercontent.com":
 			response.StatusCode = 200
 			response.Body = io.NopCloser(strings.NewReader(`{"value":"header.claims.signature"}`))
 		case "login.microsoftonline.com":
@@ -51,7 +51,7 @@ func TestAzureRecordsDeniedOperationWithoutResponseBody(t *testing.T) {
 	if target.Classification != evidence.Verified || target.Status != evidence.StatusFail {
 		t.Fatalf("target: %+v", target)
 	}
-	if target.Evidence["provider_error_code"] != "AuthorizationFailed" || target.Evidence["response_body_recorded"] != false {
+	if target.Evidence["provider_error_code"] != "AuthorizationFailed" || target.Evidence["response_body_recorded"] != false || target.Evidence["operation_authorized"] != false {
 		t.Fatalf("evidence: %+v", target.Evidence)
 	}
 }

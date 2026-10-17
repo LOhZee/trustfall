@@ -1,0 +1,114 @@
+name: TrustFall OIDC-enabled container assessment
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: Published immutable TrustFall image reference (ghcr.io/lohzee/trustfall@sha256:...)
+        required: true
+        type: string
+      profile:
+        description: baseline, hardened, or custom
+        required: false
+        default: baseline
+        type: string
+      policy:
+        description: Reviewed inline policy YAML; required when profile is custom
+        required: false
+        default: ""
+        type: string
+      audience:
+        description: Audience to place in the issued GitHub OIDC token
+        required: false
+        default: trustfall
+        type: string
+      fail_on:
+        description: Optional enforcement severity (note, low, medium, high, or critical)
+        required: false
+        default: ""
+        type: string
+      probe_timeout:
+        description: Per-probe Go duration, greater than zero and no more than 5m
+        required: false
+        default: 5s
+        type: string
+    outputs:
+      exit_code:
+        description: TrustFall exit code
+        value: ${{ jobs.scanner.outputs.exit_code }}
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  scanner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      exit_code: ${{ steps.assess.outputs.exit_code }}
+    container:
+      image: ${{ inputs.image }}
+      options: --init --cap-drop=ALL --security-opt=no-new-privileges
+    env:
+      TF_PROFILE: ${{ inputs.profile }}
+      TF_POLICY: ${{ inputs.policy }}
+      TF_FAIL_ON: ${{ inputs.fail_on }}
+      TF_PROBE_TIMEOUT: ${{ inputs.probe_timeout }}
+      TF_OIDC_AUDIENCE: ${{ inputs.audience }}
+      TRUSTFALL_CONTAINER_IMAGE: ${{ inputs.image }}
+    steps:
+      - name: Verify container-job runtime contract
+        shell: sh
+        run: |
+          set -eu
+          command -v trustfall >/dev/null
+          test -x /bin/sh
+          test -n "${RUNNER_TEMP:-}" && test -d "$RUNNER_TEMP" && test -w "$RUNNER_TEMP"
+          test -n "${GITHUB_OUTPUT:-}" && : >> "$GITHUB_OUTPUT"
+          test -n "${GITHUB_STEP_SUMMARY:-}" && : >> "$GITHUB_STEP_SUMMARY"
+          printf '## TrustFall OIDC-enabled container runtime\n\nShell, CLI, runner temp, step outputs, and job summary are writable.\n\n' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Request and assess GitHub OIDC identity
+        id: assess
+        shell: sh
+        run: |
+          set -eu
+          umask 077
+          status=0
+          case "$TF_PROFILE" in baseline|hardened|custom) ;; *) echo "profile must be baseline, hardened, or custom" >&2; status=1 ;; esac
+          case "$TF_FAIL_ON" in ""|note|low|medium|high|critical) ;; *) echo "fail_on must be empty, note, low, medium, high, or critical" >&2; status=1 ;; esac
+          if [ -z "$TF_OIDC_AUDIENCE" ]; then echo "audience must not be empty" >&2; status=1; fi
+          if [ "$TF_PROFILE" = custom ] && [ -z "$TF_POLICY" ]; then echo "custom profile requires policy content" >&2; status=1; fi
+          if [ "$TF_PROFILE" != custom ] && [ -n "$TF_POLICY" ]; then echo "policy content is accepted only with the custom profile" >&2; status=1; fi
+          if [ "$status" -eq 0 ]; then
+            set -- assess --profile "$TF_PROFILE" --timeout "$TF_PROBE_TIMEOUT" --request-oidc --oidc-audience "$TF_OIDC_AUDIENCE" --output "$RUNNER_TEMP/trustfall.json" --sarif "$RUNNER_TEMP/trustfall.sarif" --summary "$GITHUB_STEP_SUMMARY"
+            if [ -n "$TF_POLICY" ]; then
+              printf '%s\n' "$TF_POLICY" > "$RUNNER_TEMP/trustfall-policy.yaml"
+              set -- "$@" --policy "$RUNNER_TEMP/trustfall-policy.yaml"
+            fi
+            if [ -n "$TF_FAIL_ON" ]; then set -- "$@" --fail-on "$TF_FAIL_ON"; fi
+            set +e
+            trustfall "$@"
+            status=$?
+            set -e
+          fi
+          printf 'exit_code=%s\n' "$status" >> "$GITHUB_OUTPUT"
+
+      - name: Upload assessment reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: trustfall-oidc-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/trustfall.json
+            ${{ runner.temp }}/trustfall.sarif
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Apply TrustFall exit status
+        if: always()
+        shell: sh
+        env:
+          TF_EXIT_CODE: ${{ steps.assess.outputs.exit_code }}
+        run: exit "${TF_EXIT_CODE:-3}"

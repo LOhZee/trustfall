@@ -19,11 +19,23 @@ case "$(uname -s)-$(uname -m)" in
   *) echo "unsupported platform: $(uname -s)/$(uname -m)" >&2; exit 1 ;;
 esac
 
-install_root="$(mktemp -d "${RUNNER_TEMP:-/tmp}/trustfall-action.XXXXXX")"
+temp_root="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
+if [[ ! -d "$temp_root" || ! -w "$temp_root" ]]; then
+  echo "temporary directory is unavailable or not writable: $temp_root" >&2
+  exit 1
+fi
+for command in curl sha256sum tar; do
+  if ! command -v "$command" >/dev/null 2>&1; then
+    echo "required installer command is missing: $command" >&2
+    exit 1
+  fi
+done
+
+install_root="$(mktemp -d "$temp_root/trustfall-action.XXXXXX")"
 archive="$install_root/$artifact"
 mkdir "$install_root/bin"
 curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-  --output "$archive" "https://github.com/trustfall-ci/trustfall/releases/download/$version/$artifact"
+  --output "$archive" "https://github.com/LOhZee/trustfall/releases/download/$version/$artifact"
 printf '%s  %s\n' "$expected_sha" "$archive" | sha256sum --check --status
 tar --extract --gzip --file "$archive" --directory "$install_root/bin" trustfall
 chmod 0755 "$install_root/bin/trustfall"

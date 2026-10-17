@@ -10,11 +10,16 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/trustfall-ci/trustfall/internal/engine"
-	"github.com/trustfall-ci/trustfall/internal/evidence"
+	"github.com/LOhZee/trustfall/internal/engine"
+	"github.com/LOhZee/trustfall/internal/evidence"
 )
 
-type Probe struct{ ProcRoot string }
+type Probe struct {
+	ProcRoot          string
+	SocketPaths       []string
+	WritablePaths     []string
+	HostResourcePaths []string
+}
 
 func (Probe) Metadata() engine.Metadata {
 	return engine.Metadata{Name: "container-isolation", Version: "1", Module: "isolation", Requirements: []string{"Linux procfs"}}
@@ -45,12 +50,17 @@ func (p Probe) Run(_ context.Context, _ engine.Config) ([]evidence.Finding, erro
 			capEvidence[strings.ToLower(field)] = names
 		}
 	}
-	effective, _ := decodeCaps(status["CapEff"])
-	cf := evidence.NewFinding("TF-ISO-001", "Linux process capabilities", "isolation", evidence.SeverityNote, evidence.Observed, evidence.StatusPass, fmt.Sprintf("%d effective Linux capabilities observed", len(effective)))
+	effective, effectiveErr := decodeCaps(status["CapEff"])
+	permitted, permittedErr := decodeCaps(status["CapPrm"])
+	bounding, boundingErr := decodeCaps(status["CapBnd"])
+	cf := evidence.NewFinding("TF-ISO-001", "Linux process capabilities", "isolation", evidence.SeverityNote, evidence.Observed, evidence.StatusPass, fmt.Sprintf("%d effective, %d permitted and %d bounding Linux capabilities observed", len(effective), len(permitted), len(bounding)))
 	cf.Implications = "Capabilities expand the kernel operations available to the container process; they do not alone prove host access."
 	cf.Remediation = "Run the container with --cap-drop=ALL and add back only a demonstrated requirement."
 	cf.Evidence = capEvidence
-	if len(effective) > 0 {
+	if effectiveErr != nil || permittedErr != nil || boundingErr != nil {
+		cf.Classification, cf.Status = evidence.Unknown, evidence.StatusUnknown
+		cf.Observed = "one or more core Linux capability sets were unavailable or could not be decoded"
+	} else if len(effective) > 0 {
 		cf.Severity, cf.Status = evidence.SeverityMedium, evidence.StatusFail
 	}
 	out = append(out, cf)
@@ -60,14 +70,23 @@ func (p Probe) Run(_ context.Context, _ engine.Config) ([]evidence.Finding, erro
 	if secText == "" {
 		secText = "unavailable"
 	}
-	sf := evidence.NewFinding("TF-ISO-002", "Seccomp and no-new-privileges", "isolation", evidence.SeverityMedium, evidence.Observed, evidence.StatusPass, "seccomp mode is "+secText)
+	noNewPrivs, noNewPrivsPresent := status["NoNewPrivs"]
+	sf := evidence.NewFinding("TF-ISO-002", "Seccomp and no-new-privileges", "isolation", evidence.SeverityMedium, evidence.Observed, evidence.StatusPass, "seccomp mode is "+secText+" and no-new-privileges is enabled")
 	sf.Implications = "Seccomp reduces syscall exposure; its presence does not prove the filter is sufficiently restrictive."
 	sf.Remediation = "Use the runtime default or a reviewed restrictive seccomp profile and set no-new-privileges."
-	sf.Evidence = map[string]any{"seccomp_mode": secText, "seccomp_filters": status["Seccomp_filters"], "no_new_privileges": status["NoNewPrivs"] == "1"}
-	if sec == "0" {
-		sf.Status = evidence.StatusFail
-	} else if sec == "" {
+	sf.Evidence = map[string]any{"seccomp_mode": secText, "seccomp_filters": status["Seccomp_filters"], "no_new_privileges": noNewPrivs == "1", "no_new_privileges_available": noNewPrivsPresent}
+	if sec == "" || !noNewPrivsPresent {
 		sf.Status, sf.Classification = evidence.StatusUnknown, evidence.Unknown
+		sf.Observed = "seccomp or no-new-privileges state was unavailable"
+	} else if sec == "0" {
+		sf.Status = evidence.StatusFail
+		sf.Observed = "seccomp was disabled"
+	} else if sec != "1" && sec != "2" {
+		sf.Status, sf.Classification = evidence.StatusUnknown, evidence.Unknown
+		sf.Observed = "seccomp mode could not be interpreted"
+	} else if noNewPrivs != "1" {
+		sf.Status = evidence.StatusFail
+		sf.Observed = "seccomp was enabled but no-new-privileges was not enabled"
 	}
 	out = append(out, sf)
 
@@ -77,7 +96,7 @@ func (p Probe) Run(_ context.Context, _ engine.Config) ([]evidence.Finding, erro
 	if b, err := os.ReadFile(root + "/self/attr/current"); err == nil {
 		lf.Evidence = map[string]any{"current": strings.TrimSpace(string(b))}
 	} else {
-		lf.Classification, lf.Status, lf.Observed = evidence.Unknown, evidence.StatusUnknown, "security module context unavailable: "+err.Error()
+		lf.Classification, lf.Status, lf.Observed = evidence.Unknown, evidence.StatusUnknown, "security module context unavailable: "+evidence.SafeError(err)
 	}
 	out = append(out, lf)
 
@@ -85,13 +104,25 @@ func (p Probe) Run(_ context.Context, _ engine.Config) ([]evidence.Finding, erro
 	uf.Implications = "Identity mapping helps describe namespace isolation but does not prove containment."
 	uf.Remediation = "Prefer rootless/user-namespaced containers where supported and validate the effective mapping."
 	uf.Evidence = map[string]any{}
+	mapsAvailable := true
 	for _, n := range []string{"uid_map", "gid_map"} {
 		if b, err := os.ReadFile(root + "/self/" + n); err == nil {
 			uf.Evidence[n] = strings.TrimSpace(string(b))
+		} else {
+			mapsAvailable = false
+			uf.Evidence[n+"_available"] = false
 		}
 	}
-	if len(uf.Evidence) == 0 {
+	if uidMap, ok := uf.Evidence["uid_map"].(string); ok {
+		if mapsToHostZero, valid := uidZeroMapsToHostZero(uidMap); valid {
+			uf.Evidence["uid_zero_maps_to_host_uid_zero"] = mapsToHostZero
+		} else {
+			mapsAvailable = false
+		}
+	}
+	if !mapsAvailable {
 		uf.Classification, uf.Status = evidence.Unknown, evidence.StatusUnknown
+		uf.Observed = "one or more user namespace ID mappings were unavailable or malformed"
 	}
 	out = append(out, uf)
 
@@ -111,22 +142,29 @@ func (p Probe) Run(_ context.Context, _ engine.Config) ([]evidence.Finding, erro
 	}
 	out = append(out, mf)
 
-	sockets := []string{"/var/run/docker.sock", "/run/docker.sock", "/run/containerd/containerd.sock", "/var/run/crio/crio.sock", "/run/podman/podman.sock"}
-	var present, writable []string
+	sockets := p.SocketPaths
+	if sockets == nil {
+		sockets = []string{"/var/run/docker.sock", "/run/docker.sock", "/run/containerd/containerd.sock", "/var/run/crio/crio.sock", "/run/podman/podman.sock"}
+	}
+	var present, writable, inspectionErrors []string
 	for _, path := range sockets {
 		if _, err := os.Lstat(path); err == nil {
 			present = append(present, path)
 			if syscall.Access(path, 2) == nil {
 				writable = append(writable, path)
 			}
+		} else if !os.IsNotExist(err) {
+			inspectionErrors = append(inspectionErrors, path)
 		}
 	}
 	rf := evidence.NewFinding("TF-ISO-007", "Container runtime socket exposure", "isolation", evidence.SeverityCritical, evidence.Observed, evidence.StatusPass, "no known container runtime sockets were visible")
 	rf.Implications = "A writable runtime socket can often control sibling containers or the host; visibility alone does not verify successful control."
 	rf.Remediation = "Do not mount container runtime sockets into assessment or build jobs."
-	rf.Evidence = map[string]any{"present_paths": present, "writable_paths": writable}
+	rf.Evidence = map[string]any{"present_paths": present, "writable_paths": writable, "uninspectable_paths": inspectionErrors}
 	if len(present) > 0 {
 		rf.Status, rf.Observed = evidence.StatusFail, "one or more container runtime sockets were visible"
+	} else if len(inspectionErrors) > 0 {
+		rf.Classification, rf.Status, rf.Observed = evidence.Unknown, evidence.StatusUnknown, "one or more runtime socket paths could not be inspected"
 	}
 	out = append(out, rf)
 
@@ -138,17 +176,26 @@ func (p Probe) Run(_ context.Context, _ engine.Config) ([]evidence.Finding, erro
 			hasSysAdmin = true
 		}
 	}
+	uidZeroHostZero, uidMapValid := uidZeroMapsToHostZero(stringOrEmpty(uf.Evidence["uid_map"]))
 	pf := evidence.NewFinding("TF-ISO-008", "Privileged execution indicators", "isolation", evidence.SeverityHigh, evidence.Observed, evidence.StatusPass, "no strong privileged-container indicator was observed")
-	pf.Implications = "Root identity or CAP_SYS_ADMIN increases attack surface, but neither alone verifies a container escape or host access."
+	pf.Implications = "Root identity or CAP_SYS_ADMIN increases attack surface, but neither alone verifies a container escape or host access. UID 0 in a remapped user namespace is not equivalent to host UID 0."
 	pf.Remediation = "Use a non-root image user, drop all capabilities and set no-new-privileges."
-	pf.Evidence = map[string]any{"effective_uid_root": euidRoot, "cap_sys_admin": hasSysAdmin, "no_new_privileges": status["NoNewPrivs"] == "1"}
+	pf.Evidence = map[string]any{"effective_uid_root": euidRoot, "cap_sys_admin": hasSysAdmin, "no_new_privileges": status["NoNewPrivs"] == "1", "uid_map_available": uidMapValid, "uid_zero_maps_to_host_uid_zero": uidZeroHostZero}
 	if euidRoot || hasSysAdmin {
 		pf.Status, pf.Observed = evidence.StatusFail, "one or more privileged execution indicators were observed"
+		if euidRoot && uidMapValid && !uidZeroHostZero && !hasSysAdmin {
+			pf.Severity = evidence.SeverityMedium
+			pf.Observed = "uid 0 was observed inside a remapped user namespace; host-root authority was not established"
+		}
 	}
 	out = append(out, pf)
 
 	pathSet := map[string]bool{}
-	for _, path := range []string{os.Getenv("GITHUB_WORKSPACE"), os.Getenv("RUNNER_TEMP"), "/workspace", "/work", "/tmp", "/proc", "/sys", "/dev"} {
+	writablePaths := p.WritablePaths
+	if writablePaths == nil {
+		writablePaths = []string{os.Getenv("GITHUB_WORKSPACE"), os.Getenv("RUNNER_TEMP"), os.Getenv("TMPDIR"), "/workspace", "/work", "/tmp", "/proc", "/sys", "/dev"}
+	}
+	for _, path := range writablePaths {
 		if path == "" || pathSet[path] {
 			continue
 		}
@@ -167,24 +214,46 @@ func (p Probe) Run(_ context.Context, _ engine.Config) ([]evidence.Finding, erro
 	wf.Evidence = map[string]any{"paths": paths}
 	out = append(out, wf)
 
-	var resources []map[string]any
-	accessible := false
-	for _, path := range []string{"/dev/kmsg", "/dev/mem", "/dev/kvm", "/proc/kcore", "/sys/kernel/debug"} {
-		if info, err := os.Lstat(path); err == nil {
-			readable, writable := syscall.Access(path, 4) == nil, syscall.Access(path, 2) == nil
-			resources = append(resources, map[string]any{"path": path, "mode": info.Mode().String(), "readable_by_process": readable, "writable_by_process": writable})
-			accessible = accessible || readable || writable
-		}
+	resourcePaths := p.HostResourcePaths
+	if resourcePaths == nil {
+		resourcePaths = []string{"/dev/kmsg", "/dev/mem", "/dev/kvm", "/proc/kcore", "/sys/kernel/debug"}
 	}
+	hf := sensitiveHostResourceFinding(resourcePaths, os.Lstat)
+	out = append(out, hf)
+	return out, nil
+}
+
+func sensitiveHostResourceFinding(paths []string, lstat func(string) (os.FileInfo, error)) evidence.Finding {
+	resources, uninspectableResources, accessible := inspectSensitiveHostResources(paths, lstat)
 	hf := evidence.NewFinding("TF-ISO-010", "Sensitive host resource access", "isolation", evidence.SeverityHigh, evidence.Observed, evidence.StatusPass, "no selected sensitive host device or kernel path was accessible")
 	hf.Implications = "Access to host devices or kernel debug interfaces can materially weaken the container boundary; accessibility does not itself prove escape."
 	hf.Remediation = "Do not expose host devices or kernel debug filesystems to CI jobs."
-	hf.Evidence = map[string]any{"resources": resources, "contents_inspected": false}
+	hf.Evidence = map[string]any{"resources": resources, "uninspectable_paths": uninspectableResources, "contents_inspected": false}
 	if accessible {
 		hf.Status, hf.Observed = evidence.StatusFail, "one or more selected sensitive host resources were accessible"
+	} else if len(uninspectableResources) > 0 {
+		hf.Classification, hf.Status, hf.Observed = evidence.Unknown, evidence.StatusUnknown, "one or more selected sensitive host resource paths could not be inspected"
 	}
-	out = append(out, hf)
-	return out, nil
+	return hf
+}
+
+func inspectSensitiveHostResources(paths []string, lstat func(string) (os.FileInfo, error)) ([]map[string]any, []string, bool) {
+	var resources []map[string]any
+	var uninspectable []string
+	accessible := false
+	for _, path := range paths {
+		info, err := lstat(path)
+		if err != nil {
+			if !os.IsNotExist(err) {
+				uninspectable = append(uninspectable, path)
+			}
+			continue
+		}
+		readable, writable := syscall.Access(path, 4) == nil, syscall.Access(path, 2) == nil
+		resources = append(resources, map[string]any{"path": path, "mode": info.Mode().String(), "readable_by_process": readable, "writable_by_process": writable})
+		accessible = accessible || readable || writable
+	}
+	return resources, uninspectable, accessible
 }
 
 func parseKV(path string) (map[string]string, error) {
@@ -218,6 +287,25 @@ func decodeCaps(raw string) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+func uidZeroMapsToHostZero(raw string) (bool, bool) {
+	fields := strings.Fields(raw)
+	if len(fields) < 3 {
+		return false, false
+	}
+	containerID, err1 := strconv.ParseUint(fields[0], 10, 64)
+	hostID, err2 := strconv.ParseUint(fields[1], 10, 64)
+	length, err3 := strconv.ParseUint(fields[2], 10, 64)
+	if err1 != nil || err2 != nil || err3 != nil || length == 0 {
+		return false, false
+	}
+	return containerID == 0 && hostID == 0, true
+}
+
+func stringOrEmpty(v any) string {
+	s, _ := v.(string)
+	return s
 }
 
 func inspectMounts(path string) (evidence.Finding, error) {

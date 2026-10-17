@@ -17,6 +17,7 @@ TrustFall assumes the runner, container runtime, workflow definition, repository
 | Container isolation limitations | Reports caps/seccomp/LSM/namespaces/cgroups/mounts/sockets separately and never calls configuration proof. | Shared-kernel isolation remains dependent on runtime/kernel correctness; no breakout testing occurs. |
 | Untrusted policy/configuration | Strict schema fields, 1 MiB limit, constrained methods/schemes/hosts, no shell evaluation. | Policy can authorise external targets and OIDC/cloud activity. Only reviewed policy should run with credentials. |
 | Workflow expression injection | Examples pass inputs through environment variables; shell commands do not evaluate input strings. Active Azure example uses a static reviewed policy. | A maintainer-controlled image reference or workflow revision is executable authority. Pin and review it. |
+| Validation-image publication | The manual validation workflow alone has a narrowly scoped build job with `packages: write`; runtime jobs receive only package read where needed and consume its returned digest. | Dispatch creates a non-release GHCR artifact. Review the commit and retain the hosted run record. |
 | Report tampering | Stable fingerprints, run provenance, release attestation guidance, immutable artifacts once uploaded. | A job with write access to report files can alter them before upload. For high assurance, attest reports externally after the job. |
 | Misleading/inconclusive evidence | Four evidence classes, unknown on denial/timeouts, explicit operation wording, no fabricated SARIF locations or confidence score. | Users may still overgeneralise point-in-time results. Preserve limitations with downstream presentation. |
 
@@ -27,3 +28,5 @@ Unsafe policy forms fail validation. Cloud redirects are refused. Azure never fa
 ## Credential authorisation
 
 Any OIDC or Azure authority must be deliberately granted to the assessment job and scoped to a protected environment and read-only resource where possible. Do not expose cloud identity to fork PR code. GitHub `id-token: write` is additional authority even though it reveals no static secret; it allows minting identity tokens and must not be enabled merely to make a report look complete.
+
+The passive and OIDC-enabled reusable workflows are separate entry points because job permissions are established before steps execute. A shell command or boolean input cannot safely add `id-token: write` at runtime, and the called workflow cannot expand authority withheld by its caller.

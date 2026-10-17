@@ -3,8 +3,8 @@ package cloud
 import (
 	"context"
 
-	"github.com/trustfall-ci/trustfall/internal/engine"
-	"github.com/trustfall-ci/trustfall/internal/evidence"
+	"github.com/LOhZee/trustfall/internal/engine"
+	"github.com/LOhZee/trustfall/internal/evidence"
 )
 
 // Provider is intentionally operation-oriented: a successful request proves only

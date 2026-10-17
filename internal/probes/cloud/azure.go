@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/trustfall-ci/trustfall/internal/evidence"
-	"github.com/trustfall-ci/trustfall/internal/policy"
+	"github.com/LOhZee/trustfall/internal/evidence"
+	"github.com/LOhZee/trustfall/internal/policy"
 )
 
 type Azure struct {
@@ -69,10 +69,16 @@ func (a Azure) Assess(ctx context.Context) ([]evidence.Finding, error) {
 		bodyEvidence := summarizeAzureBody(resp, target)
 		resp.Body.Close()
 		code := resp.Header.Get("x-ms-error-code")
-		f := evidence.NewFinding("TF-CLOUD-AZ-002", "Azure read-only operation: "+target.Name, "cloud", evidence.SeverityMedium, evidence.Verified, evidence.StatusInfo, fmt.Sprintf("Azure returned HTTP %d for the explicitly scoped %s operation", resp.StatusCode, method))
+		outcome := "responded"
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			outcome = "allowed"
+		} else if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			outcome = "denied this attempt"
+		}
+		f := evidence.NewFinding("TF-CLOUD-AZ-002", "Azure read-only operation: "+target.Name, "cloud", evidence.SeverityMedium, evidence.Verified, evidence.StatusInfo, fmt.Sprintf("Azure %s with HTTP %d for the explicitly scoped %s operation", outcome, resp.StatusCode, method))
 		f.Implications = "The response verifies only this operation, identity, target and point in time. A denial does not establish absence of other capabilities."
 		f.Remediation = "Compare this operation with the expected capability policy and reduce Azure RBAC scope if it exceeds intent."
-		f.Evidence = map[string]any{"provider": "azure", "target": target.Name, "method": method, "http_status": resp.StatusCode, "provider_error_code": code, "response_body_recorded": false}
+		f.Evidence = map[string]any{"provider": "azure", "target": target.Name, "method": method, "http_status": resp.StatusCode, "provider_error_code": code, "request_completed": true, "operation_authorized": resp.StatusCode >= 200 && resp.StatusCode < 300, "response_body_recorded": false}
 		for key, value := range bodyEvidence {
 			f.Evidence[key] = value
 		}
@@ -95,8 +101,8 @@ func githubOIDC(ctx context.Context, client *http.Client, audience string) (stri
 		return "", fmt.Errorf("OIDC request facilities unavailable")
 	}
 	u, e := url.Parse(rawURL)
-	if e != nil {
-		return "", fmt.Errorf("invalid OIDC request URL")
+	if e != nil || u.Scheme != "https" || u.User != nil || !isGitHubOIDCHost(u.Hostname()) {
+		return "", fmt.Errorf("invalid or untrusted OIDC request URL")
 	}
 	q := u.Query()
 	q.Set("audience", audience)
@@ -122,6 +128,11 @@ func githubOIDC(ctx context.Context, client *http.Client, audience string) (stri
 		return "", fmt.Errorf("invalid OIDC response")
 	}
 	return body.Value, nil
+}
+
+func isGitHubOIDCHost(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	return host == "actions.githubusercontent.com" || strings.HasSuffix(host, ".actions.githubusercontent.com")
 }
 func exchange(ctx context.Context, client *http.Client, tenant, clientID, scope, assertion string) (string, string, []int, error) {
 	endpoint := "https://login.microsoftonline.com/" + tenant + "/oauth2/v2.0/token"

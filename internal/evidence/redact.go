@@ -37,47 +37,55 @@ func RedactMap(in map[string]any) map[string]any {
 	out := make(map[string]any, len(in))
 	for k, v := range in {
 		if sensitiveKey(k) {
-			out[k] = "[REDACTED]"
+			// Boolean presence/handling markers such as
+			// github_token_variable_present and raw_tokens_recorded are evidence,
+			// not credential material. Never preserve a string or structured value
+			// under a credential-like key.
+			if marker, ok := v.(bool); ok {
+				out[k] = marker
+			} else {
+				out[k] = "[REDACTED]"
+			}
 			continue
 		}
-		switch x := v.(type) {
-		case string:
-			out[k] = RedactString(x)
-		case map[string]any:
-			out[k] = RedactMap(x)
-		case map[string]string:
-			nested := make(map[string]any, len(x))
-			for nk, nv := range x {
-				nested[nk] = nv
-			}
-			out[k] = RedactMap(nested)
-		case []string:
-			y := make([]string, len(x))
-			for i := range x {
-				y[i] = RedactString(x[i])
-			}
-			out[k] = y
-		case []any:
-			y := make([]any, len(x))
-			for i := range x {
-				if s, ok := x[i].(string); ok {
-					y[i] = RedactString(s)
-				} else {
-					y[i] = x[i]
-				}
-			}
-			out[k] = y
-		case []map[string]any:
-			y := make([]map[string]any, len(x))
-			for i := range x {
-				y[i] = RedactMap(x[i])
-			}
-			out[k] = y
-		default:
-			out[k] = v
-		}
+		out[k] = redactValue(v)
 	}
 	return out
+}
+
+func redactValue(v any) any {
+	switch x := v.(type) {
+	case string:
+		return RedactString(x)
+	case map[string]any:
+		return RedactMap(x)
+	case map[string]string:
+		nested := make(map[string]any, len(x))
+		for k, value := range x {
+			nested[k] = value
+		}
+		return RedactMap(nested)
+	case []string:
+		out := make([]string, len(x))
+		for i := range x {
+			out[i] = RedactString(x[i])
+		}
+		return out
+	case []any:
+		out := make([]any, len(x))
+		for i := range x {
+			out[i] = redactValue(x[i])
+		}
+		return out
+	case []map[string]any:
+		out := make([]map[string]any, len(x))
+		for i := range x {
+			out[i] = RedactMap(x[i])
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 func SafeError(err error) string {

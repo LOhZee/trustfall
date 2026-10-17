@@ -1,4 +1,4 @@
-module github.com/trustfall-ci/trustfall
+module github.com/LOhZee/trustfall
 
 go 1.26.5
 

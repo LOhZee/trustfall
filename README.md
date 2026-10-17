@@ -2,12 +2,14 @@
 
 **Your pipeline says it’s isolated. Let’s find out.**
 
+[![CI](https://github.com/LOhZee/trustfall/actions/workflows/ci.yml/badge.svg)](https://github.com/LOhZee/trustfall/actions/workflows/ci.yml)
+
 TrustFall is a runtime trust-boundary assessment tool for GitHub Actions container jobs. It inspects what the running workload can actually see and performs only explicitly authorised, bounded capability tests. It is not a workflow linter, vulnerability scanner, or claim that compliant configuration equals isolation.
 
 Every result says what kind of evidence supports it:
 
 - **Observed** — directly inspected in this process or its kernel interfaces.
-- **Verified** — a particular authorised operation was attempted and succeeded.
+- **Verified** — a particular authorised operation was executed and its bounded outcome was evidenced.
 - **Inferred** — configuration suggests a capability, but TrustFall did not establish it.
 - **Unknown** — evidence was unavailable or inconclusive. Unknown never means secure.
 
@@ -34,9 +36,9 @@ The preferred GitHub integration is the reusable workflow. Pin both the workflow
 ```yaml
 jobs:
   trustfall:
-    uses: trustfall-ci/trustfall/.github/workflows/scan.yml@FULL_COMMIT_SHA
+    uses: LOhZee/trustfall/.github/workflows/scan.yml@FULL_COMMIT_SHA
     with:
-      image: ghcr.io/trustfall-ci/trustfall@sha256:RELEASE_DIGEST
+      image: ghcr.io/lohzee/trustfall@sha256:RELEASE_DIGEST
       profile: hardened
 ```
 
@@ -63,6 +65,7 @@ trustfall assess --profile baseline|hardened|custom [--policy trustfall.yaml]
                   [--output report.json] [--sarif report.sarif]
                   [--summary "$GITHUB_STEP_SUMMARY"] [--fail-on high]
                   [--timeout 5s] [--format json|text] [--verbose] [--no-network]
+                  [--request-oidc] [--oidc-audience trustfall]
 trustfall compare baseline.json hardened.json
 trustfall validate --policy trustfall.yaml
 ```
@@ -86,14 +89,14 @@ JSON follows [report-v1.schema.json](schemas/report-v1.schema.json). SARIF is 2.
 trustfall compare default.json hardened.json > comparison.json
 ```
 
-Comparison labels regressions, improvements, changed/new/removed evidence, and inconclusive changes. It does not claim that a workflow or image change caused an observed difference.
+Comparison labels regressions, improvements, changed evidence, missing evidence, and inconclusive changes. It records assessment-policy and runtime-context differences and does not claim that a workflow or image change caused an observed difference. The `baseline` and `hardened` profiles are assessment policies; they do not alter the container. A meaningful hardening comparison must run the same assessment against deliberately different container options, as shown in [the comparison example](examples/workflows/hardened-comparison.yml).
 
 ## Marketplace composite action
 
-[`action.yml`](action.yml) is a composite action for assessing the **existing job**. It cannot create or change `jobs.<id>.container`; GitHub’s action model does not permit an action to introduce a job boundary. Use it only in a suitable existing Linux container job with Bash, curl, tar and `sha256sum`. It downloads an exact release archive and requires the caller to provide the published SHA-256 before executing it.
+[`action.yml`](action.yml) is a composite action for assessing the **existing job**. It cannot create or change `jobs.<id>.container`; GitHub’s action model does not permit an action to introduce a job boundary. Use it only in a suitable existing Linux job (including an existing container job) with Bash, curl, tar and `sha256sum`. It downloads an exact release archive, requires the caller to provide the published SHA-256, validates its inputs, and exposes the CLI exit code.
 
 ```yaml
-- uses: trustfall-ci/trustfall@FULL_COMMIT_SHA
+- uses: LOhZee/trustfall@FULL_COMMIT_SHA
   with:
     version: v1.2.3
     sha256: PUBLISHED_PLATFORM_ARCHIVE_SHA256
@@ -101,11 +104,13 @@ Comparison labels regressions, improvements, changed/new/removed evidence, and i
     no-network: true
 ```
 
-The reusable workflow is preferred because it owns and assesses a real container-job boundary.
+The reusable workflow is preferred because it owns and assesses a real container-job boundary. The composite action does not create, configure, or harden `jobs.<id>.container`.
 
 ## Active probes and OIDC
 
-Network, metadata and cloud destinations come only from the policy allowlist. `--no-network` overrides every network-capable probe. OIDC claim retrieval requires `identity.request_oidc: true` and the job’s explicit `id-token: write`; it never requests cloud credentials by itself. Azure testing additionally requires `cloud.azure.enabled: true`, valid workload-identity identifiers, and explicit `management.azure.com` GET/HEAD targets. A role-assignment list target records only the returned object count, never assignment fields or a response body.
+Network, metadata and cloud destinations come only from the policy allowlist. `--no-network` overrides every network-capable probe. Passive [`scan.yml`](.github/workflows/scan.yml) has only `contents: read`; it observes OIDC facility presence and explicitly reports that issuance was not tested. OIDC-enabled [`scan-oidc.yml`](.github/workflows/scan-oidc.yml) declares `id-token: write`, requests a token, and locally validates issuer, requested audience, subject presence and temporal claims. It discards the JWT and does not independently verify its signature. External callers must also explicitly grant `id-token: write` to the job that calls the reusable workflow.
+
+OIDC facility presence is not token issuance. Token issuance is not cloud federation. Cloud federation is not successful resource access. TrustFall reports each operation separately and never requests cloud credentials merely because OIDC is enabled. Azure testing additionally requires `cloud.azure.enabled: true`, valid workload-identity identifiers, and explicit `management.azure.com` GET/HEAD targets. A role-assignment list target records only the returned object count, never assignment fields or a response body.
 
 Do not add `id-token: write` to pull-request workflows merely to remove an unknown result. That permission gives the job additional identity-minting authority. The Azure example is manual, environment-protected, and read-only.
 
@@ -115,7 +120,7 @@ Releases use semantic `vMAJOR.MINOR.PATCH` tags and run only from a published, n
 
 Consumers should pin an image digest and full action/workflow SHA. Maintainers update the moving major tag only after verifying the release attestations, then update examples and the hosted-integration `TRUSTFALL_INTEGRATION_IMAGE` variable to the new digest. Dependabot proposes Go, Docker base and GitHub Action updates; reviewers must verify upstream release provenance and preserve full-SHA pins.
 
-The hosted integration workflow is intentionally gated on that repository variable. It is a real container job when configured, but this development environment cannot execute GitHub-hosted jobs, so local Docker is not represented as equivalent validation.
+The hosted integration workflow is intentionally gated on an immutable-image repository variable. The manual [runtime validation workflow](.github/workflows/runtime-validation.yml) bootstraps a commit-scoped, non-release image and then runs a real container-job matrix. Dispatching it publishes a GHCR package and is therefore a deliberate maintainer operation; see [runtime validation](docs/RUNTIME_VALIDATION.md). Local Docker is never represented as equivalent to a GitHub-hosted container job.
 
 ## Documentation
 
@@ -123,6 +128,7 @@ The hosted integration workflow is intentionally gated on that repository variab
 - [Security model and probe guarantees](docs/SECURITY_MODEL.md)
 - [Threat model](docs/THREAT_MODEL.md)
 - [Publishing and trusted release configuration](docs/PUBLISHING.md)
+- [Runtime validation matrix and current evidence](docs/RUNTIME_VALIDATION.md)
 - [Example workflows](examples/workflows)
 - [Contributing](CONTRIBUTING.md) and [security policy](SECURITY.md)
 

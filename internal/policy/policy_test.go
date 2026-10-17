@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/trustfall-ci/trustfall/internal/evidence"
+	"github.com/LOhZee/trustfall/internal/evidence"
 )
 
 func TestDecodeRejectsUnknownAndUnsafeTargets(t *testing.T) {

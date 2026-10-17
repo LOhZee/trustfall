@@ -4,9 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"time"
 
-	"github.com/trustfall-ci/trustfall/internal/evidence"
+	"github.com/LOhZee/trustfall/internal/evidence"
 )
 
 type Config struct {
@@ -35,7 +36,13 @@ type Engine struct{ Probes []Probe }
 
 func (e Engine) Run(ctx context.Context, cfg Config, version, mode string) (evidence.Report, []error) {
 	start := time.Now().UTC()
-	r := evidence.Report{SchemaVersion: evidence.SchemaVersion, Tool: "trustfall", Run: evidence.RunMetadata{ID: fmt.Sprintf("%d", start.UnixNano()), StartedAt: start, Profile: cfg.Profile, PolicyMode: mode, NetworkDenied: cfg.NoNetwork, ToolVersion: version}}
+	r := evidence.Report{SchemaVersion: evidence.SchemaVersion, Tool: "trustfall", Run: evidence.RunMetadata{
+		ID: fmt.Sprintf("%d", start.UnixNano()), StartedAt: start, Profile: cfg.Profile, PolicyMode: mode, NetworkDenied: cfg.NoNetwork, ToolVersion: version,
+		Runtime: evidence.RuntimeContext{
+			Repository: os.Getenv("GITHUB_REPOSITORY"), WorkflowRef: os.Getenv("GITHUB_WORKFLOW_REF"), RunnerEnvironment: os.Getenv("RUNNER_ENVIRONMENT"),
+			RunnerOS: os.Getenv("RUNNER_OS"), RunnerArch: os.Getenv("RUNNER_ARCH"), ContainerImage: os.Getenv("TRUSTFALL_CONTAINER_IMAGE"),
+		},
+	}}
 	var errs []error
 	for _, p := range e.Probes {
 		m := p.Metadata()

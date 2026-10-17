@@ -28,7 +28,7 @@ func TestExitCodes(t *testing.T) {
 		t.Fatalf("audit exit %d: %s", code, errOut.String())
 	}
 	path := filepath.Join(t.TempDir(), "policy.yaml")
-	contents := "version: '1'\nmode: enforce\nfail_on: critical\nexpectations:\n  TF-CRED-003:\n    status: pass\n    condition: git configuration should be absent\n"
+	contents := "version: '1'\nmode: enforce\nfail_on: critical\nexpectations:\n  TF-ID-001:\n    status: fail\n    condition: process must run as root for this deliberately failing test\n"
 	if e := os.WriteFile(path, []byte(contents), 0o600); e != nil {
 		t.Fatal(e)
 	}
@@ -37,5 +37,17 @@ func TestExitCodes(t *testing.T) {
 	code := run([]string{"assess", "--profile", "custom", "--policy", path, "--no-network"}, &out, &errOut)
 	if code != exitPolicy {
 		t.Fatalf("policy exit %d stderr=%s", code, errOut.String())
+	}
+}
+
+func TestOIDCAndTimeoutArgumentsFailClosed(t *testing.T) {
+	for _, args := range [][]string{
+		{"assess", "--oidc-audience", "trustfall", "--no-network"},
+		{"assess", "--timeout", "6m", "--no-network"},
+	} {
+		var out, errOut bytes.Buffer
+		if code := run(args, &out, &errOut); code != exitUsage {
+			t.Fatalf("args %v returned %d, stderr=%s", args, code, errOut.String())
+		}
 	}
 }

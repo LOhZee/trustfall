@@ -1,0 +1,228 @@
+name: Runtime validation (publishes non-release image)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trustfall-runtime-validation
+  cancel-in-progress: false
+
+jobs:
+  authorize-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Restrict package-writing validation to main
+        shell: bash
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          [[ "$REF" == refs/heads/main ]] || {
+            echo "runtime validation may publish only from refs/heads/main" >&2
+            exit 1
+          }
+
+  build-image:
+    needs: authorize-source
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64
+          tags: ghcr.io/lohzee/trustfall:validation-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/LOhZee/trustfall
+            org.opencontainers.image.revision=${{ github.sha }}
+          build-args: |
+            VERSION=validation
+            COMMIT=${{ github.sha }}
+          sbom: true
+          provenance: mode=max
+
+  passive-default:
+    needs: build-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ghcr.io/lohzee/trustfall@${{ needs.build-image.outputs.digest }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --init
+    env:
+      TRUSTFALL_CONTAINER_IMAGE: ghcr.io/lohzee/trustfall@${{ needs.build-image.outputs.digest }}
+    steps:
+      - name: Verify job-container runtime and audit behavior
+        shell: sh
+        run: |
+          set -eu
+          command -v trustfall >/dev/null
+          test -x /bin/sh
+          test -d "$RUNNER_TEMP" && test -w "$RUNNER_TEMP"
+          : >> "$GITHUB_OUTPUT"
+          printf '## Default container validation\n' >> "$GITHUB_STEP_SUMMARY"
+          trustfall doctor
+          trustfall assess --profile baseline --no-network --output "$RUNNER_TEMP/default.json" --sarif "$RUNNER_TEMP/default.sarif" --summary "$GITHUB_STEP_SUMMARY"
+          grep -q '"network_denied": true' "$RUNNER_TEMP/default.json"
+          grep -q '"rule_id": "TF-ID-004"' "$RUNNER_TEMP/default.json"
+          grep -q '"status": "fail"' "$RUNNER_TEMP/default.json"
+      - name: Validate deterministic enforcement and malformed-policy exits
+        shell: sh
+        run: |
+          set -eu
+          umask 077
+          printf '%s\n' 'version: "1"' 'mode: enforce' 'fail_on: critical' 'expectations:' '  TF-ID-001:' '    status: fail' '    condition: process must run as root for this deliberately failing validation' > "$RUNNER_TEMP/enforce.yaml"
+          set +e
+          trustfall assess --profile custom --policy "$RUNNER_TEMP/enforce.yaml" --no-network --output "$RUNNER_TEMP/enforce.json"
+          enforce_status=$?
+          printf '%s\n' 'version: "1"' 'mode: audit' 'unknown_field: true' > "$RUNNER_TEMP/malformed.yaml"
+          trustfall assess --profile custom --policy "$RUNNER_TEMP/malformed.yaml" --no-network --output "$RUNNER_TEMP/malformed.json"
+          malformed_status=$?
+          set -e
+          test "$enforce_status" -eq 2
+          test "$malformed_status" -eq 1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: runtime-default
+          path: ${{ runner.temp }}/default.*
+          if-no-files-found: error
+
+  passive-hardened:
+    needs: build-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ghcr.io/lohzee/trustfall@${{ needs.build-image.outputs.digest }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --init --cap-drop=ALL --security-opt=no-new-privileges
+    env:
+      TRUSTFALL_CONTAINER_IMAGE: ghcr.io/lohzee/trustfall@${{ needs.build-image.outputs.digest }}
+    steps:
+      - name: Assess hardened runtime without changing assessment policy
+        shell: sh
+        run: trustfall assess --profile baseline --no-network --output "$RUNNER_TEMP/hardened.json" --sarif "$RUNNER_TEMP/hardened.sarif" --summary "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: runtime-hardened
+          path: ${{ runner.temp }}/hardened.*
+          if-no-files-found: error
+
+  oidc-unavailable:
+    needs: build-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ghcr.io/lohzee/trustfall@${{ needs.build-image.outputs.digest }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --init --cap-drop=ALL --security-opt=no-new-privileges
+    env:
+      TRUSTFALL_CONTAINER_IMAGE: ghcr.io/lohzee/trustfall@${{ needs.build-image.outputs.digest }}
+    steps:
+      - name: Confirm missing OIDC permission remains inconclusive
+        shell: sh
+        run: |
+          set -eu
+          trustfall assess --profile baseline --request-oidc --output "$RUNNER_TEMP/no-oidc.json"
+          grep -q 'OIDC request facilities are absent' "$RUNNER_TEMP/no-oidc.json"
+          grep -q '"evidence_classification": "unknown"' "$RUNNER_TEMP/no-oidc.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: runtime-no-oidc
+          path: ${{ runner.temp }}/no-oidc.json
+          if-no-files-found: error
+
+  oidc-enabled:
+    needs: build-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+      id-token: write
+    container:
+      image: ghcr.io/lohzee/trustfall@${{ needs.build-image.outputs.digest }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --init --cap-drop=ALL --security-opt=no-new-privileges
+    env:
+      TRUSTFALL_CONTAINER_IMAGE: ghcr.io/lohzee/trustfall@${{ needs.build-image.outputs.digest }}
+    steps:
+      - name: Verify GitHub OIDC issuance and selected claims
+        shell: sh
+        run: |
+          set -eu
+          trustfall assess --profile baseline --request-oidc --oidc-audience trustfall --output "$RUNNER_TEMP/oidc.json" --summary "$GITHUB_STEP_SUMMARY"
+          grep -q '"issuer_valid": true' "$RUNNER_TEMP/oidc.json"
+          grep -q '"audience_valid": true' "$RUNNER_TEMP/oidc.json"
+          grep -q '"temporal_claims_valid": true' "$RUNNER_TEMP/oidc.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: runtime-oidc
+          path: ${{ runner.temp }}/oidc.json
+          if-no-files-found: error
+
+  compare:
+    needs: [build-image, passive-default, passive-hardened]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ghcr.io/lohzee/trustfall@${{ needs.build-image.outputs.digest }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --init --cap-drop=ALL --security-opt=no-new-privileges
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: runtime-default
+          path: reports/default
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: runtime-hardened
+          path: reports/hardened
+      - name: Compare actual runtime configurations
+        shell: sh
+        run: trustfall compare --output comparison.json reports/default/default.json reports/hardened/hardened.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: runtime-comparison
+          path: comparison.json
+          if-no-files-found: error

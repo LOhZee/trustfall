@@ -3,7 +3,7 @@ package reporting
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/trustfall-ci/trustfall/internal/evidence"
+	"github.com/LOhZee/trustfall/internal/evidence"
 	"testing"
 )
 
@@ -22,5 +22,16 @@ func TestSARIFHasRequiredShapeAndNoFabricatedLocations(t *testing.T) {
 	}
 	if bytes.Contains(b.Bytes(), []byte("\"locations\"")) {
 		t.Fatal("runtime result contained fabricated location")
+	}
+}
+
+func TestReadJSONRejectsUnknownAndTrailingContent(t *testing.T) {
+	for _, input := range []string{
+		`{"schema_version":"1.0.0","tool":"trustfall","run":{},"findings":[],"unexpected":true}`,
+		`{"schema_version":"1.0.0","tool":"trustfall","run":{},"findings":[]} {}`,
+	} {
+		if _, err := ReadJSON(bytes.NewBufferString(input)); err == nil {
+			t.Fatalf("accepted malformed report: %s", input)
+		}
 	}
 }
