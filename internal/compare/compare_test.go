@@ -26,8 +26,8 @@ func TestReportsDoesNotCallMissingBaselineEvidenceANewExposure(t *testing.T) {
 }
 
 func TestReportsExposesAssessmentAndRuntimeDifferences(t *testing.T) {
-	base := evidence.Report{Run: evidence.RunMetadata{Profile: "baseline", NetworkDenied: false, ToolVersion: "v1", Runtime: evidence.RuntimeContext{Repository: "LOhZee/trustfall", WorkflowRef: "workflow@a", RunnerEnvironment: "github-hosted", RunnerOS: "Linux", RunnerArch: "X64", ContainerImage: "image@one"}}}
-	candidate := evidence.Report{Run: evidence.RunMetadata{Profile: "hardened", NetworkDenied: true, ToolVersion: "v1", Runtime: evidence.RuntimeContext{Repository: "LOhZee/trustfall", WorkflowRef: "workflow@a", RunnerEnvironment: "github-hosted", RunnerOS: "Linux", RunnerArch: "X64", ContainerImage: "image@two"}}}
+	base := evidence.Report{Run: evidence.RunMetadata{Profile: "baseline", NetworkDenied: false, ToolVersion: "v1", Runtime: evidence.RuntimeContext{Repository: "LOhZee/trustfall", WorkflowRef: "workflow@a", Job: "scanner", RunnerEnvironment: "github-hosted", RunnerOS: "Linux", RunnerArch: "X64", ContainerImage: "image@one"}}}
+	candidate := evidence.Report{Run: evidence.RunMetadata{Profile: "hardened", NetworkDenied: true, ToolVersion: "v1", Runtime: evidence.RuntimeContext{Repository: "LOhZee/trustfall", WorkflowRef: "workflow@a", Job: "scanner", RunnerEnvironment: "github-hosted", RunnerOS: "Linux", RunnerArch: "X64", ContainerImage: "image@two"}}}
 	r := Reports(base, candidate)
 	if len(r.Context.AssessmentDifferences) != 2 || len(r.Context.RuntimeDifferences) != 1 || r.Context.RuntimeComparable {
 		t.Fatalf("comparison context omitted material differences: %+v", r.Context)
@@ -41,6 +41,16 @@ func TestReportsComparesSupportingEvidence(t *testing.T) {
 	r := Reports(evidence.Report{Findings: []evidence.Finding{baseFinding}}, evidence.Report{Findings: []evidence.Finding{candidateFinding}})
 	if len(r.Changes) != 1 || r.Changes[0].Category != "changed" {
 		t.Fatalf("supporting evidence change was lost: %+v", r.Changes)
+	}
+}
+
+func TestReportsTreatsDifferentJobsAsDifferentRuntimeContexts(t *testing.T) {
+	base := evidence.Report{Run: evidence.RunMetadata{Runtime: evidence.RuntimeContext{Repository: "LOhZee/trustfall", WorkflowRef: "workflow@a", Job: "baseline", RunnerEnvironment: "github-hosted", RunnerOS: "Linux", RunnerArch: "X64", ContainerImage: "image@one"}}}
+	candidate := base
+	candidate.Run.Runtime.Job = "hardened"
+	r := Reports(base, candidate)
+	if r.Context.RuntimeComparable || len(r.Context.RuntimeDifferences) != 1 {
+		t.Fatalf("different jobs were treated as the same runtime context: %+v", r.Context)
 	}
 }
 

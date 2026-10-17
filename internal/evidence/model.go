@@ -82,6 +82,7 @@ type RunMetadata struct {
 type RuntimeContext struct {
 	Repository        string `json:"repository,omitempty"`
 	WorkflowRef       string `json:"workflow_ref,omitempty"`
+	Job               string `json:"job,omitempty"`
 	RunnerEnvironment string `json:"runner_environment,omitempty"`
 	RunnerOS          string `json:"runner_os,omitempty"`
 	RunnerArch        string `json:"runner_arch,omitempty"`

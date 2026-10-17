@@ -8,7 +8,7 @@ jobs:
       image: ghcr.io/lohzee/trustfall@sha256:REPLACE_WITH_RELEASE_DIGEST
     steps:
       - run: trustfall assess --profile baseline --no-network --output "$RUNNER_TEMP/baseline.json"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with: { name: baseline, path: "${{ runner.temp }}/baseline.json" }
   hardened:
     runs-on: ubuntu-latest
@@ -17,7 +17,7 @@ jobs:
       options: --init --cap-drop=ALL --security-opt=no-new-privileges
     steps:
       - run: trustfall assess --profile baseline --no-network --output "$RUNNER_TEMP/hardened.json"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with: { name: hardened, path: "${{ runner.temp }}/hardened.json" }
   compare:
     needs: [baseline, hardened]
@@ -26,10 +26,10 @@ jobs:
       image: ghcr.io/lohzee/trustfall@sha256:REPLACE_WITH_RELEASE_DIGEST
       options: --init --cap-drop=ALL --security-opt=no-new-privileges
     steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with: { name: baseline, path: reports/baseline }
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with: { name: hardened, path: reports/hardened }
       - run: trustfall compare --output comparison.json reports/baseline/baseline.json reports/hardened/hardened.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with: { name: comparison, path: comparison.json }

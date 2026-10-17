@@ -39,7 +39,7 @@ func (e Engine) Run(ctx context.Context, cfg Config, version, mode string) (evid
 	r := evidence.Report{SchemaVersion: evidence.SchemaVersion, Tool: "trustfall", Run: evidence.RunMetadata{
 		ID: fmt.Sprintf("%d", start.UnixNano()), StartedAt: start, Profile: cfg.Profile, PolicyMode: mode, NetworkDenied: cfg.NoNetwork, ToolVersion: version,
 		Runtime: evidence.RuntimeContext{
-			Repository: os.Getenv("GITHUB_REPOSITORY"), WorkflowRef: os.Getenv("GITHUB_WORKFLOW_REF"), RunnerEnvironment: os.Getenv("RUNNER_ENVIRONMENT"),
+			Repository: os.Getenv("GITHUB_REPOSITORY"), WorkflowRef: os.Getenv("GITHUB_WORKFLOW_REF"), Job: os.Getenv("GITHUB_JOB"), RunnerEnvironment: os.Getenv("RUNNER_ENVIRONMENT"),
 			RunnerOS: os.Getenv("RUNNER_OS"), RunnerArch: os.Getenv("RUNNER_ARCH"), ContainerImage: os.Getenv("TRUSTFALL_CONTAINER_IMAGE"),
 		},
 	}}

@@ -113,6 +113,7 @@ func compareContext(before, after evidence.RunMetadata) ComparisonContext {
 	runtimeFields := []struct{ name, before, after string }{
 		{"repository", before.Runtime.Repository, after.Runtime.Repository},
 		{"workflow_ref", before.Runtime.WorkflowRef, after.Runtime.WorkflowRef},
+		{"job", before.Runtime.Job, after.Runtime.Job},
 		{"runner_environment", before.Runtime.RunnerEnvironment, after.Runtime.RunnerEnvironment},
 		{"runner_os", before.Runtime.RunnerOS, after.Runtime.RunnerOS},
 		{"runner_arch", before.Runtime.RunnerArch, after.Runtime.RunnerArch},

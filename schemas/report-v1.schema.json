@@ -26,6 +26,7 @@
           "properties": {
             "repository": { "type": "string" },
             "workflow_ref": { "type": "string" },
+            "job": { "type": "string" },
             "runner_environment": { "type": "string" },
             "runner_os": { "type": "string" },
             "runner_arch": { "type": "string" },
