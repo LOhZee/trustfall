@@ -26,7 +26,13 @@ LABEL org.opencontainers.image.title="TrustFall" \
       org.opencontainers.image.licenses="Apache-2.0"
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build /out/trustfall /usr/local/bin/trustfall
-RUN useradd --no-create-home --uid 1001 --user-group --shell /usr/sbin/nologin trustfall \
+# The pinned base predates Debian's perl-base security update. Install the exact
+# fixed package version; a superseded/removed version fails the build and forces
+# a reviewed Dockerfile update instead of silently accepting a mutable upgrade.
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends perl-base=5.36.0-7+deb12u4 \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --no-create-home --uid 1001 --user-group --shell /usr/sbin/nologin trustfall \
     && mkdir -p /work \
     && chown trustfall:trustfall /work
 USER 1001:1001
