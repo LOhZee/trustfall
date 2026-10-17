@@ -1,0 +1,46 @@
+package isolation
+
+import (
+	"context"
+	"github.com/trustfall-ci/trustfall/internal/engine"
+	"github.com/trustfall-ci/trustfall/internal/evidence"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestUnavailableProcIsUnknown(t *testing.T) {
+	findings, err := (Probe{ProcRoot: filepath.Join(t.TempDir(), "missing")}).Run(context.Background(), engine.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 || findings[0].Classification != evidence.Unknown || findings[0].Status != evidence.StatusUnknown {
+		t.Fatalf("unexpected findings: %+v", findings)
+	}
+}
+func TestCapabilityDecode(t *testing.T) {
+	got, err := decodeCaps("0000000000200000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != "CAP_SYS_ADMIN" {
+		t.Fatalf("got %v", got)
+	}
+}
+func TestFixtureStatus(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "self", "attr"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "self", "status"), []byte("CapEff:\t0\nCapPrm:\t0\nCapBnd:\t0\nSeccomp:\t2\nNoNewPrivs:\t1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(root, "self", "mountinfo"), []byte("1 2 0:1 / / rw - overlay overlay rw\n"), 0o600)
+	findings, err := (Probe{ProcRoot: root}).Run(context.Background(), engine.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if findings[0].Status != evidence.StatusPass {
+		t.Fatalf("capabilities not pass: %+v", findings[0])
+	}
+}

@@ -1,0 +1,16 @@
+version: "1"
+mode: audit
+fail_on: high
+identity:
+  request_oidc: false
+  audience: trustfall
+network:
+  concurrency: 4
+  targets: []
+  metadata:
+    enabled: false
+    providers: []
+cloud:
+  azure:
+    enabled: false
+    targets: []

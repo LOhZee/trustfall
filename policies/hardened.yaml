@@ -1,0 +1,31 @@
+version: "1"
+mode: enforce
+fail_on: high
+expectations:
+  TF-ID-001:
+    status: pass
+    condition: process does not run as root
+  TF-ISO-001:
+    status: pass
+    condition: effective Linux capability set is empty
+  TF-ISO-002:
+    status: pass
+    condition: seccomp is enabled
+  TF-ISO-006:
+    status: pass
+    condition: no sensitive host mounts are present
+  TF-ISO-007:
+    status: pass
+    condition: no container runtime socket is exposed
+identity:
+  request_oidc: false
+network:
+  concurrency: 4
+  targets: []
+  metadata:
+    enabled: false
+    providers: []
+cloud:
+  azure:
+    enabled: false
+    targets: []

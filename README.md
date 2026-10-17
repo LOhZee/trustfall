@@ -1,314 +1,131 @@
-# Demo: Stealing & Abusing Azure Identities via Policy-as-Code (GitHub OIDC)
+# TrustFall
 
-## Scenario
-A platform team deploys Azure Policy (deployIfNotExists / modify) through a GitHub Actions
-pipeline. The pipeline authenticates to Azure using a **user-assigned managed identity (UAMI)**
-trusted via a **federated identity credential (FIC)** — no client secret, no stored credential.
-The pipeline identity itself holds only **Resource Policy Contributor** (least privilege, no
-`roleAssignments/write`).
+**Your pipeline says it’s isolated. Let’s find out.**
 
-The twist: every policy **assignment** with a `deployIfNotExists`/`modify` effect needs its own
-**separate runtime managed identity** to perform the actual remediation deployment. That identity
-is granted whatever roles the policy's `roleDefinitionIds` lists — commonly **Contributor**. The
-pipeline never holds `roleAssignments/write`, but code it deploys controls what that *other*
-identity does. This is the privilege-laundering seam the demo exploits.
+TrustFall is a runtime trust-boundary assessment tool for GitHub Actions container jobs. It inspects what the running workload can actually see and performs only explicitly authorised, bounded capability tests. It is not a workflow linter, vulnerability scanner, or claim that compliant configuration equals isolation.
 
-## Folder structure
+Every result says what kind of evidence supports it:
 
-What's in `files/azure-identity-demo/` (saved to your session storage)
+- **Observed** — directly inspected in this process or its kernel interfaces.
+- **Verified** — a particular authorised operation was attempted and succeeded.
+- **Inferred** — configuration suggests a capability, but TrustFall did not establish it.
+- **Unknown** — evidence was unavailable or inconclusive. Unknown never means secure.
 
-| File | Purpose |
-| --- | --- |
-| `infra/pipeline-identity.bicep` | **Secure baseline**: UAMI + FIC scoped to `environment:production` (exact match), Resource Policy Contributor only |
-| `infra/pipeline-identity.VULNERABLE.bicep` | **Demo variant**: wildcard FIC subject (`ref:refs/heads/*`), Contributor at management-group scope |
-| `infra/policy-definition.bicep` | Realistic custom `deployIfNotExists` policy (diagnostic settings) |
-| `infra/remediation-identity.bicep` | **Admin-run, out of band**: pre-provisioned remediation UAMI with only Log Analytics Contributor on one RG |
-| `infra/policy-assignment.bicep` / `.VULNERABLE.bicep` | Contrast: pre-provisioned minimal remediation identity vs. broad auto-granted Contributor |
-| `.github/workflows/deploy-identity.yml` | Manually bootstrap the secure pipeline identity |
-| `.github/workflows/deploy-policy.yml` | Deploy the secure policy definition, then its assignment bound to the pre-provisioned remediation identity |
-| `attack/malicious-template-injection.json` | The attacker payload — injects an Owner role assignment, laundered through the remediation identity |
-| `attack/attack-walkthrough.md` | Full live-demo script: setup, attack steps, reset commands, closing mitigation slide |
+## Quick start
 
+Build and run locally:
 
-## Local terminal assets
+```sh
+go build -o trustfall ./cmd/trustfall
+./trustfall doctor
+./trustfall assess --profile baseline --no-network --output report.json --sarif report.sarif
+```
 
-The OIDC Interactive Shell workflow installs the pinned dependencies from
-`assets/package-lock.json` with `npm ci`. `assets/stage-assets.js` validates an
-explicit file allowlist, then creates this runtime layout:
+Build the OCI image and apply the same hardening used by the reusable workflow:
+
+```sh
+docker build -t trustfall:local .
+docker run --rm --init --cap-drop=ALL --security-opt=no-new-privileges \
+  trustfall:local assess --profile hardened --no-network
+```
+
+The preferred GitHub integration is the reusable workflow. Pin both the workflow to a full commit SHA and the image to its published digest:
+
+```yaml
+jobs:
+  trustfall:
+    uses: trustfall-ci/trustfall/.github/workflows/scan.yml@FULL_COMMIT_SHA
+    with:
+      image: ghcr.io/trustfall-ci/trustfall@sha256:RELEASE_DIGEST
+      profile: hardened
+```
+
+This creates a genuine `jobs.scanner.container` job with `--init --cap-drop=ALL --security-opt=no-new-privileges`. The digest is deliberately required: the repository cannot know a release digest before that release is published.
+
+## What it assesses
+
+| Module | Passive evidence | Optional active evidence |
+|---|---|---|
+| Runtime identity | UID/GID, GitHub run context, token-facility presence | Selected OIDC claims; raw JWT is discarded |
+| Container isolation | capabilities, seccomp, LSM label, user mappings, cgroups, mounts, runtime sockets | none |
+| Credential exposure | matching environment names and credential-file metadata | none; values and file contents are never read |
+| Network boundaries | configured target definitions | DNS, one TCP connection, or one HTTPS HEAD per allowlisted target; optional body-free metadata HEAD |
+| Cloud capabilities | configured provider and operation | Azure OIDC exchange and explicit GET/HEAD targets only |
+
+TrustFall never scans address ranges, enumerates hosts, retrieves metadata credentials, modifies cloud resources, attempts a breakout, or uploads an environment dump. AWS and GCP implement the provider interface only at the architecture level in this initial release; active cloud capability operations currently support Azure. See [Security model](docs/SECURITY_MODEL.md).
+
+## CLI
 
 ```text
-APP_DIR/
-  package.json, package-lock.json, node_modules/   # backend dependencies only
-  terminal_server.js, static-server.js             # never under public/
-  public/
-    index.html, terminal.css
-    vendor/xterm/       # browser JS, CSS, adjacent source map, LICENSE
-    vendor/addon-fit/   # browser JS, adjacent source map, LICENSE
+trustfall version [--json]
+trustfall doctor
+trustfall assess --profile baseline|hardened|custom [--policy trustfall.yaml]
+                  [--output report.json] [--sarif report.sarif]
+                  [--summary "$GITHUB_STEP_SUMMARY"] [--fail-on high]
+                  [--timeout 5s] [--format json|text] [--verbose] [--no-network]
+trustfall compare baseline.json hardened.json
+trustfall validate --policy trustfall.yaml
 ```
 
-Custom HTML, CSS, and inline browser JavaScript remain in `assets/`; all browser
-asset references are relative and same-origin. The existing stylesheet is retained.
-The installed xterm CSS requires no adjacent fonts/images. Add future public files
-(including nested paths) explicitly to the staging allowlist; do not copy the entire
-assets directory. Staging fails if a required file is missing, and removes stale
-public files. Backend sources, manifests, tests, dotfiles, and unrelated files are
-not staged into public.
+Exit codes are deterministic:
 
-For isolated local validation (Node.js 18+), replace the absolute checkout path:
+| Code | Meaning |
+|---:|---|
+| 0 | completed; audit findings do not fail the command |
+| 1 | invalid invocation or policy |
+| 2 | explicit enforcement policy was violated |
+| 3 | operational failure, such as report I/O or an engine error |
 
-```bash
-cd /path/to/policy-as-code/assets
-npm ci --ignore-scripts --no-audit --no-fund
-npm test
+`--fail-on` explicitly changes the run to enforcement mode. Without enforcement, findings alone never change the exit code. A custom policy is strict-decoded: unknown fields, unsafe endpoint schemes, unsupported methods, duplicate target names, and invalid concurrency fail validation.
+
+## Reports and comparison
+
+JSON follows [report-v1.schema.json](schemas/report-v1.schema.json). SARIF is 2.1.0 and contains stable partial fingerprints but no fabricated source locations for runtime findings. The Markdown summary is designed for `$GITHUB_STEP_SUMMARY`.
+
+```sh
+trustfall compare default.json hardened.json > comparison.json
 ```
 
-These tests stage real npm browser assets in temporary directories and serve only
-static HTTP on loopback with an ephemeral port. They never import the shell backend,
-spawn a PTY, access OIDC credentials, or start a tunnel. Native dependency install
-scripts are intentionally skipped for these tests; the workflow retains them for
-its backend runtime. Tests cover local URLs, query strings, GET/HEAD, MIME types,
-missing/invalid paths, traversal and symlink escapes, and backend exclusion.
+Comparison labels regressions, improvements, changed/new/removed evidence, and inconclusive changes. It does not claim that a workflow or image change caused an observed difference.
 
-This static-asset update does **not** add shell authentication or change OIDC,
-secrets access, privilege, or tunnel behavior. The existing public tunnel and
-privileged interactive shell remain security concerns; passing static tests does
-not validate or secure them. Do not run that workflow for static-asset validation.
+## Marketplace composite action
 
-## Two configurations to contrast
+[`action.yml`](action.yml) is a composite action for assessing the **existing job**. It cannot create or change `jobs.<id>.container`; GitHub’s action model does not permit an action to introduce a job boundary. Use it only in a suitable existing Linux container job with Bash, curl, tar and `sha256sum`. It downloads an exact release archive and requires the caller to provide the published SHA-256 before executing it.
 
-| | Secure baseline | Vulnerable demo variant |
-|---|---|---|
-| FIC subject | `repo:org/repo:environment:production` (exact match) | `repo:org/repo:ref:refs/heads/*` (wildcard — any branch) |
-| GitHub Environment protection | Required reviewers + restricted to `main` | None |
-| Pipeline identity scope | Resource Policy Contributor at **subscription scope** in the identity template; management-group access must be provisioned separately for policy deployment | Resource Policy Contributor at **management group** |
-| Remediation MI role grant | Pre-provisioned UAMI with explicit, minimal `Log Analytics Contributor` on the target RG, granted out of band by an admin; no pipeline identity holds `roleAssignments/write` | `Contributor` at management group scope, auto-expanded by a "helper" policy initiative |
-| Branch protection on policy repo | Required PR review, no direct push to `main` | Direct push allowed / stale unpinned third-party Action |
-
-1. Run the secure baseline first to show "this looks airtight, OIDC, no secrets, least privilege."
-2. Switch to the vulnerable variant to show how a single loosened control (wildcard FIC subject,
-   or an unpinned/compromised Action in the workflow) reopens the exact same escalation path from
-   earlier in the talk this time laundered through a CI/CD pipeline instead of a human.
-
-## Deploying with GitHub Actions
-
-The workflows deploy only the secure Bicep templates, never the `.VULNERABLE`
-variants or attack payloads. Both workflows run only from `main` and use OIDC
-with commit-pinned actions. No client secrets are needed.
-
-### Environments and variables
-
-Create `production` and `production-bootstrap` GitHub environments. Configure
-required reviewers and restrict deployment branches to `main` on **both**
-environments; these protections must be configured in repository settings.
-Protect `main` with required PR reviews, especially for workflow and Bicep changes.
-
-Set the following repository-level Actions variables:
-
-| Variable | Value |
-| --- | --- |
-| `AZURE_TENANT_ID` | Azure tenant ID |
-| `AZURE_SUBSCRIPTION_ID` | Subscription containing the pipeline identity |
-| `MANAGEMENT_GROUP_ID` | Management group containing the policy definition and assignment |
-| `LOG_ANALYTICS_WORKSPACE_ID` | Full resource ID of an existing Log Analytics workspace |
-| `REMEDIATION_IDENTITY_RESOURCE_ID` | Full resource ID of the remediation UAMI (`remediationIdentityResourceId` output of `infra/remediation-identity.bicep`) |
-| `AZURE_LOCATION` | Optional deployment/identity location; defaults to `westeurope` |
-| `IDENTITY_RESOURCE_GROUP` | Optional identity RG name; defaults to `rg-policy-pipeline` |
-
-Set `AZURE_CLIENT_ID` **separately on each environment**:
-
-- `production-bootstrap`: an independently provisioned bootstrap identity with
-  an exact federated subject
-  `repo:<owner>/<repo>:environment:production-bootstrap`. It must already exist
-  before either workflow can use it. Grant it resource-group, managed-identity,
-  federated-credential, and deployment management permissions in the identity
-  subscription, plus permission to create the template's subscription role
-  assignment. For policy assignment deployment it needs only policy assignment
-  and deployment permissions at the management group (e.g. Resource Policy
-  Contributor) and Managed Identity Operator on the remediation UAMI. It needs
-  **no** RBAC administration rights for the policy assignment: the remediation
-  role grant is made out of band by an administrator.
-- `production`: the `uamiClientId` output of the identity deployment. Its FIC
-  trusts exactly `repo:<owner>/<repo>:environment:production`. The template
-  grants Resource Policy Contributor at subscription scope, **not** management
-  group scope. An administrator must separately grant Resource Policy Contributor
-  at the configured management group so it can deploy the policy definition.
-  Do not grant this identity RBAC administration permissions.
-
-Environment-scoped tenant/subscription variables may override the repository
-values if the bootstrap identity uses a different login subscription.
-
-### Deployment order
-
-1. Provision the bootstrap identity and environment protections out of band.
-   An administrator also deploys `infra/remediation-identity.bicep` (never from a
-   pipeline), passing the bootstrap identity's object ID as
-   `assignmentDeployerPrincipalId`, and sets `REMEDIATION_IDENTITY_RESOURCE_ID`
-   to its output:
-
-   ```bash
-   az deployment sub create --location westeurope \
-     --template-file infra/remediation-identity.bicep \
-     --parameters remediationTargetSubscriptionId=<sub-id> \
-       remediationTargetResourceGroupName=<rg> \
-       assignmentDeployerPrincipalId=<bootstrap-sp-object-id>
-   ```
-2. Run **Deploy Pipeline Identity** manually from `main`. It creates the
-   identity RG, UAMI, production FIC, and subscription policy-contributor grant.
-   The final step prints the template outputs, including `uamiClientId`.
-3. Set the `production` environment's `AZURE_CLIENT_ID` to that output and grant
-   its management-group policy permissions as described above.
-4. Run **Deploy Policy** manually from `main`, or push a change to its workflow
-   or secure policy templates. The production job deploys the definition; the
-   separately approved bootstrap job then deploys the assignment, bound to the
-   pre-provisioned remediation UAMI, using the definition's output ID.
-
-The workspace and remediation target RG must already exist, and the target
-subscription must belong to the selected management group's hierarchy. The
-workflows build the Bicep templates before deployment and serialize runs to
-avoid overlapping updates. They do not create remediation tasks for existing
-noncompliant resources; trigger those separately when needed.
-
-**Trade-off:** the remediation role grant moves out of the PR-reviewed pipeline
-into an admin-run IaC step. In exchange, no identity reachable from GitHub can
-write role assignments, so pipeline-deployed code can only *bind* the existing,
-minimally scoped remediation identity — it cannot widen its permissions.
-
-## Authenticated interactive diagnostic shell
-
-The historical `.github/workflows/OIDC Interactive Shell.yml` filename is retained,
-but the workflow is now **Interactive Diagnostic Shell**: it does not request OIDC,
-log in to Azure, or inject application credentials. Use only for approved diagnostics
-on trusted code. It provides arbitrary Bash execution to authenticated operators,
-not a sandbox against those operators. It does not change any cloud resources.
-
-### Files and dependencies
-
-`tools/interactive-shell/` contains:
-
-- `public/index.html`, `terminal.css`, `terminal.js`: the terminal UI, using local
-  xterm and fit-addon bundles (no CDN or remote executable loader).
-  The branded console layout and cyan/purple palette come from `git-s-hell.yml`;
-  local gradients and system fonts replace its remote background image and fonts.
-  The xterm theme is configured in `terminal.js`, since page CSS alone cannot
-  change xterm's rendered terminal colors.
-- `server.js`: explicit static routes, authentication, WebSocket protocol, and PTYs.
-- `lifecycle.js`: verified SSH tunnel, endpoint discovery, timeout, and cleanup.
-- `*.test.js`: Node's built-in tests, including a real local PTY and mocked tunnels.
-- `package.json`, `package-lock.json`: exact direct versions and integrity-locked
-  dependency tree. Node 24 LTS is required; the workflow uses Node 24.22.0.
-
-Install with `npm ci` in that directory, not `npm install` during a workflow run.
-Linux needs OpenSSH client, Python 3, make, and g++ (the workflow installs these).
-`node-pty` has native installation scripts; review dependency changes and commit
-the updated lockfile. No code or assets are fetched from arbitrary executable URLs.
-
-### Provisioning and operator connection
-
-1. Separately provision a dedicated repository Actions secret,
-   `INTERACTIVE_SHELL_ACCESS_SECRET`, containing a cryptographically random value
-   (for example, 32 random bytes encoded as 64 hex characters). Accepted length is
-   32–256 printable non-space characters. Share through an approved secret manager,
-   **not** Actions logs, outputs, URLs, workflow inputs, or source files.
-2. Set repository Actions variable `INTERACTIVE_SHELL_SSH_KNOWN_HOSTS` to a
-   `known_hosts` entry for `localhost.run`. Independently verify the current host
-   key against the tunnel provider's published information before provisioning;
-   do not blindly trust `ssh-keyscan` output. Missing or changed keys fail closed.
-   No provisioning or credential rotation is performed by this workflow.
-3. Dispatch **Interactive Diagnostic Shell** (or its caller) on a reviewed ref.
-   Read the credential-free HTTPS endpoint in the run log. Only open this endpoint
-   from a trusted browser. Paste the dedicated secret into the password field.
-   Authentication uses an Authorization header, then a five-minute, single-use
-   HttpOnly/Secure/SameSite cookie; the secret is cleared from the form and is never
-   saved in browser storage. Never append credentials to the URL.
-4. Type normally; terminal resizing is automatic. Exit Bash or close the page to
-   end the run. A disconnected session is not resumable; dispatch a new run.
-
-The public tunnel uses `localhost.run`; its HTTPS termination is a **trust boundary**:
-the provider can observe or alter traffic, including credentials and terminal data.
-Use only where this third-party trust is approved. The dedicated secret must not be
-reused for other systems. Protect workflow edits and restrict Actions execution to
-trusted maintainers. The PTY receives HOME, PATH, TERM, and LANG plus the optional
-`AZURE_CLIENT_ID` and `AZURE_TENANT_ID` identifiers described below (Bash adds its
-own standard variables), with a temporary home and the checked-out workspace as cwd.
-This environment allowlist is not isolation from the server: a trusted shell operator
-runs as the same container user and can inspect files/processes. Do not place unrelated
-secrets in the job, workspace, or container.
-
-### Optional Azure demo identifiers
-
-Set `AZURE_CLIENT_ID` and `AZURE_TENANT_ID` as repository Actions variables
-(recommended for these non-credential identifiers) or repository Actions secrets.
-Explicitly supplied secrets take precedence over variables. Both values are
-optional and must be UUIDs when supplied; unset/empty values are omitted from the
-shell. Direct dispatch and the example caller support both configurations.
-External reusable-workflow callers may explicitly map these two optional secrets;
-variable fallbacks are read from the caller repository. For local mode, export
-the two identifiers before `npm start`.
-
-These values are available to commands as `$AZURE_CLIENT_ID` and
-`$AZURE_TENANT_ID`; **they do not authenticate to Azure**. This change does not
-install Azure CLI or automatically sign in. Use a separately approved interactive
-authentication method with available tooling for the demo. Client secrets, access
-tokens, GitHub tokens, OIDC request credentials, and the shell access secret are
-still excluded from the PTY environment. No OIDC permissions are added. Never
-paste cloud credentials into this third-party-terminated public tunnel.
-
-### Reusable-workflow migration (intentional breaking changes)
-
-`.github/workflows/use-remote.yml` demonstrates a same-commit local call. External
-callers should pin `uses: azurekid/policy-as-code/.github/workflows/OIDC Interactive Shell.yml@<full-SHA>`
-and pass that **same full SHA** as the required `implementation_ref` input. The
-workflow explicitly checks out this repository at that SHA, **not the caller's
-repository**. A read-only token must be able to read this public repository.
-
-Pass `INTERACTIVE_SHELL_ACCESS_SECRET` and, if needed, only the optional
-`AZURE_CLIENT_ID` and `AZURE_TENANT_ID` identifiers in the caller's `secrets`
-mapping, not `secrets: inherit`. All other old Azure/PAT/gallery secret declarations
-remain removed; explicit mappings for them must be removed from callers. Set the verified SSH
-host-key variable in the caller repository too. Only `contents: read` is needed;
-remove caller `id-token: write`. Application-secret inheritance and unauthenticated
-public shells are deliberately unsupported. Container privileged mode is removed.
-
-### Local validation and lifecycle
-
-From `tools/interactive-shell/` on Linux with Node 24:
-
-```bash
-npm ci
-npm run check
-npm test
-npm audit --omit=dev
-read -rsp 'Dedicated test secret: ' INTERACTIVE_SHELL_ACCESS_SECRET; echo
-export INTERACTIVE_SHELL_ACCESS_SECRET
-npm start
-unset INTERACTIVE_SHELL_ACCESS_SECRET
+```yaml
+- uses: trustfall-ci/trustfall@FULL_COMMIT_SHA
+  with:
+    version: v1.2.3
+    sha256: PUBLISHED_PLATFORM_ARCHIVE_SHA256
+    profile: baseline
+    no-network: true
 ```
 
-Use a disposable random **test-only** secret meeting the length requirement. Open
-`http://127.0.0.1:8080`; the local-only mode does not open a tunnel and uses a
-non-Secure cookie solely for loopback HTTP. Local mode has a 30-minute limit and
-uses the current package directory as cwd (override with `GITHUB_WORKSPACE`).
-Tests generate disposable credentials internally and never contact the tunnel service.
+The reusable workflow is preferred because it owns and assesses a real container-job boundary.
 
-The workflow allows at most one active shell and ends after that shell exits or
-disconnects. Credentials and the exact discovered Origin are checked **before**
-WebSocket upgrade or PTY creation; missing/cross-origin requests are rejected.
-Only six explicit static routes are served; arbitrary paths, source files, and
-query strings are not served. WebSocket input and dimensions are bounded and typed;
-malformed/binary messages close the terminal.
+## Active probes and OIDC
 
-One supervisor owns the server and SSH child. Startup/endpoint-discovery failure
-(60 seconds), tunnel/server failure, cancellation signals, and the 115-minute
-supervisor timeout all close sockets, kill the PTY and its Linux session's jobs, remove temporary
-homes/host-key files, and stop SSH (with a forced-kill fallback). Heartbeats detect
-lost clients within about 30 seconds. The Actions job has a 120-minute backstop and
-an unprivileged container with an init process; container teardown is the final
-cleanup boundary, including jobs deliberately detached by an authorized operator.
-SIGKILL/runner loss cannot execute application cleanup. A local shell is likewise
-not a containment boundary for deliberately detached processes.
+Network, metadata and cloud destinations come only from the policy allowlist. `--no-network` overrides every network-capable probe. OIDC claim retrieval requires `identity.request_oidc: true` and the job’s explicit `id-token: write`; it never requests cloud credentials by itself. Azure testing additionally requires `cloud.azure.enabled: true`, valid workload-identity identifiers, and explicit `management.azure.com` GET/HEAD targets. A role-assignment list target records only the returned object count, never assignment fields or a response body.
 
-Local tests cover auth rejection, single-use sessions, static assets/content types,
-terminal I/O/resize validation, cleanup, and supervisor failures. They do not verify
-live `localhost.run` availability, host keys, forwarding behavior, or GitHub runner
-cancellation/container teardown. Validate those only in an approved environment,
-never by exposing a live secret-bearing shell as a test.
+Do not add `id-token: write` to pull-request workflows merely to remove an unknown result. That permission gives the job additional identity-minting authority. The Azure example is manual, environment-protected, and read-only.
+
+## Supply chain and releases
+
+Releases use semantic `vMAJOR.MINOR.PATCH` tags and run only from a published, non-prerelease GitHub Release. CI/release actions are pinned to full commits. The release workflow builds amd64/arm64 binaries and a multi-architecture GHCR image, emits SHA-256 files, SBOM and maximal provenance, and creates GitHub artifact/container attestations. Publishing requires repository Actions to allow attestations and GHCR package writes; no credential or repository setting is assumed.
+
+Consumers should pin an image digest and full action/workflow SHA. Maintainers update the moving major tag only after verifying the release attestations, then update examples and the hosted-integration `TRUSTFALL_INTEGRATION_IMAGE` variable to the new digest. Dependabot proposes Go, Docker base and GitHub Action updates; reviewers must verify upstream release provenance and preserve full-SHA pins.
+
+The hosted integration workflow is intentionally gated on that repository variable. It is a real container job when configured, but this development environment cannot execute GitHub-hosted jobs, so local Docker is not represented as equivalent validation.
+
+## Documentation
+
+- [Architecture and decisions](docs/ARCHITECTURE.md)
+- [Security model and probe guarantees](docs/SECURITY_MODEL.md)
+- [Threat model](docs/THREAT_MODEL.md)
+- [Publishing and trusted release configuration](docs/PUBLISHING.md)
+- [Example workflows](examples/workflows)
+- [Contributing](CONTRIBUTING.md) and [security policy](SECURITY.md)
+
+Historical Azure policy/OIDC demonstration material remains in `infra/`, `attack/`, and `assets/`. Its executable workflows were moved to `docs/legacy/azure-demo-workflows/*.disabled`; they are not part of TrustFall and GitHub will not run them.
+
+Licensed under Apache-2.0.

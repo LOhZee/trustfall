@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trustfall.dev/schemas/report-v1.schema.json",
+  "title": "TrustFall assessment report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "tool", "run", "findings"],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "tool": { "const": "trustfall" },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "started_at", "completed_at", "profile", "policy_mode", "network_denied", "tool_version"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "started_at": { "type": "string", "format": "date-time" },
+        "completed_at": { "type": "string", "format": "date-time" },
+        "profile": { "type": "string" },
+        "policy_mode": { "enum": ["audit", "enforce"] },
+        "network_denied": { "type": "boolean" },
+        "tool_version": { "type": "string" }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/finding" }
+    }
+  },
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule_id", "title", "severity", "evidence_classification", "module", "status", "observed_condition", "security_implications", "remediation_guidance", "timestamp", "probe", "fingerprint"],
+      "properties": {
+        "rule_id": { "type": "string", "pattern": "^TF-[A-Z0-9-]+$" },
+        "title": { "type": "string", "minLength": 1 },
+        "severity": { "enum": ["note", "low", "medium", "high", "critical"] },
+        "evidence_classification": { "enum": ["observed", "verified", "inferred", "unknown"] },
+        "module": { "enum": ["identity", "isolation", "network", "credentials", "cloud"] },
+        "status": { "enum": ["pass", "fail", "informational", "unknown", "not_applicable"] },
+        "observed_condition": { "type": "string" },
+        "expected_condition": { "type": "string" },
+        "security_implications": { "type": "string" },
+        "remediation_guidance": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "probe": {
+          "type": "object",
+          "required": ["name", "version", "duration_ns"],
+          "properties": {
+            "name": { "type": "string" },
+            "version": { "type": "string" },
+            "duration_ns": { "type": "integer", "minimum": 0 },
+            "timed_out": { "type": "boolean" },
+            "network": { "type": "boolean" },
+            "active": { "type": "boolean" },
+            "requirements": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "evidence": { "type": "object" },
+        "fingerprint": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+      }
+    }
+  }
+}

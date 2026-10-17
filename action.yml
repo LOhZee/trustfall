@@ -1,0 +1,68 @@
+name: TrustFall Runtime Assessment
+description: Assess the effective runtime trust boundaries of an existing GitHub Actions job
+author: TrustFall maintainers
+branding:
+  icon: shield
+  color: purple
+inputs:
+  version:
+    description: Exact semantic release version to install (for example v1.2.3)
+    required: true
+  sha256:
+    description: Published SHA-256 for the release archive matching the current platform
+    required: true
+  profile:
+    description: baseline, hardened, or custom
+    required: false
+    default: baseline
+  policy:
+    description: Policy path; required for the custom profile
+    required: false
+    default: ""
+  fail-on:
+    description: Optional enforcement severity threshold
+    required: false
+    default: ""
+  no-network:
+    description: Disable network, metadata, OIDC retrieval, and cloud probes
+    required: false
+    default: "true"
+  output:
+    description: JSON report path
+    required: false
+    default: trustfall.json
+  sarif:
+    description: SARIF report path
+    required: false
+    default: trustfall.sarif
+outputs:
+  report:
+    description: Path to the generated JSON report
+    value: ${{ inputs.output }}
+  sarif:
+    description: Path to the generated SARIF report
+    value: ${{ inputs.sarif }}
+runs:
+  using: composite
+  steps:
+    - name: Install verified TrustFall release
+      shell: bash
+      env:
+        TRUSTFALL_VERSION: ${{ inputs.version }}
+        TRUSTFALL_SHA256: ${{ inputs.sha256 }}
+      run: "${GITHUB_ACTION_PATH}/scripts/install.sh \"${TRUSTFALL_VERSION}\" \"${TRUSTFALL_SHA256}\""
+    - name: Assess current job runtime
+      shell: bash
+      env:
+        INPUT_PROFILE: ${{ inputs.profile }}
+        INPUT_POLICY: ${{ inputs.policy }}
+        INPUT_FAIL_ON: ${{ inputs['fail-on'] }}
+        INPUT_NO_NETWORK: ${{ inputs['no-network'] }}
+        INPUT_OUTPUT: ${{ inputs.output }}
+        INPUT_SARIF: ${{ inputs.sarif }}
+      run: |
+        args=(assess --profile "$INPUT_PROFILE" --output "$INPUT_OUTPUT" --sarif "$INPUT_SARIF" --summary "$GITHUB_STEP_SUMMARY")
+        if [[ -n "$INPUT_POLICY" ]]; then args+=(--policy "$INPUT_POLICY"); fi
+        if [[ -n "$INPUT_FAIL_ON" ]]; then args+=(--fail-on "$INPUT_FAIL_ON"); fi
+        if [[ "$INPUT_NO_NETWORK" == "true" ]]; then args+=(--no-network); fi
+        trustfall "${args[@]}"

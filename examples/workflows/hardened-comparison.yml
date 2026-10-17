@@ -1,0 +1,35 @@
+name: Default and hardened comparison inputs
+on: { workflow_dispatch: {} }
+permissions: { contents: read }
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/trustfall-ci/trustfall@sha256:REPLACE_WITH_RELEASE_DIGEST
+    steps:
+      - run: trustfall assess --profile baseline --no-network --output "$RUNNER_TEMP/baseline.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with: { name: baseline, path: "${{ runner.temp }}/baseline.json" }
+  hardened:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/trustfall-ci/trustfall@sha256:REPLACE_WITH_RELEASE_DIGEST
+      options: --init --cap-drop=ALL --security-opt=no-new-privileges
+    steps:
+      - run: trustfall assess --profile baseline --no-network --output "$RUNNER_TEMP/hardened.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with: { name: hardened, path: "${{ runner.temp }}/hardened.json" }
+  compare:
+    needs: [baseline, hardened]
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/trustfall-ci/trustfall@sha256:REPLACE_WITH_RELEASE_DIGEST
+      options: --init --cap-drop=ALL --security-opt=no-new-privileges
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: { name: baseline, path: reports/baseline }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: { name: hardened, path: reports/hardened }
+      - run: trustfall compare --output comparison.json reports/baseline/baseline.json reports/hardened/hardened.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with: { name: comparison, path: comparison.json }

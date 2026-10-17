@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trustfall.dev/schemas/policy-v1.schema.json",
+  "title": "TrustFall policy v1",
+  "type": "object",
+  "required": ["version", "mode"],
+  "properties": {
+    "version": { "const": "1" },
+    "mode": { "enum": ["audit", "enforce"] },
+    "fail_on": { "enum": ["note", "low", "medium", "high", "critical"] },
+    "deny_rules": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "expectations": { "type": "object", "additionalProperties": { "type": "object", "required": ["status", "condition"], "properties": { "status": { "enum": ["pass", "fail", "informational", "unknown", "not_applicable"] }, "condition": { "type": "string" } }, "additionalProperties": false } },
+    "identity": { "type": "object", "properties": { "request_oidc": { "type": "boolean" }, "audience": { "type": "string", "maxLength": 255 } }, "additionalProperties": false },
+    "network": {
+      "type": "object",
+      "properties": {
+        "concurrency": { "type": "integer", "minimum": 1, "maximum": 16 },
+        "targets": { "type": "array", "items": { "$ref": "#/$defs/networkTarget" } },
+        "metadata": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "providers": { "type": "array", "items": { "enum": ["aws", "azure", "gcp"] }, "uniqueItems": true }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "cloud": {
+      "type": "object",
+      "properties": {
+        "azure": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "audience": { "type": "string" },
+            "scope": { "const": "https://management.azure.com/.default" },
+            "targets": { "type": "array", "items": { "$ref": "#/$defs/azureTarget" } }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "networkTarget": {
+      "type": "object",
+      "required": ["name", "type", "address"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "type": { "enum": ["dns", "tcp", "https"] },
+        "address": { "type": "string", "minLength": 1 },
+        "expect_reachable": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "azureTarget": {
+      "type": "object",
+      "required": ["name", "url"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "url": { "type": "string", "format": "uri", "pattern": "^https://management\\.azure\\.com/" },
+        "method": { "enum": ["GET", "HEAD", "get", "head", ""] },
+        "expected_status": { "type": "array", "items": { "type": "integer", "minimum": 100, "maximum": 599 }, "uniqueItems": true }
+      },
+      "additionalProperties": false
+    }
+  }
+}

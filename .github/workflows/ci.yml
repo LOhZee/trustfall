@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test and vet
+        run: |
+          go test -race ./...
+          go vet ./...
+      - name: Build CLI
+        run: go build -trimpath -o trustfall ./cmd/trustfall
+      - name: Smoke test audit behavior
+        run: ./trustfall assess --profile baseline --no-network --output report.json --sarif report.sarif
+      - name: Validate generated JSON
+        run: jq -e '.schema_version == "1.0.0" and (.findings | length > 0)' report.json
+
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Build local image
+        run: docker build --build-arg VERSION=ci --tag trustfall:ci .
+      - name: Local container smoke test
+        run: docker run --rm --cap-drop=ALL --security-opt=no-new-privileges trustfall:ci assess --profile baseline --no-network
+      - name: Scan image for high-severity vulnerabilities
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
+        with:
+          image-ref: trustfall:ci
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"

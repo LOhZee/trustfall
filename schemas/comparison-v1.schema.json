@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trustfall.dev/schemas/comparison-v1.schema.json",
+  "title": "TrustFall comparison v1",
+  "type": "object",
+  "required": ["schema_version", "baseline_run_id", "candidate_run_id", "changes", "disclaimer"],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "baseline_run_id": { "type": "string" },
+    "candidate_run_id": { "type": "string" },
+    "disclaimer": { "type": "string", "minLength": 1 },
+    "changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["key", "rule_id", "title", "category", "note"],
+        "properties": {
+          "key": { "type": "string" },
+          "rule_id": { "type": "string" },
+          "title": { "type": "string" },
+          "category": { "enum": ["new", "new_exposure", "removed", "removed_exposure", "changed", "regression", "improvement", "inconclusive"] },
+          "before": { "$ref": "#/$defs/snapshot" },
+          "after": { "$ref": "#/$defs/snapshot" },
+          "note": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "snapshot": {
+      "type": "object",
+      "required": ["status", "evidence_classification", "severity", "observed_condition"],
+      "properties": {
+        "status": { "enum": ["pass", "fail", "informational", "unknown", "not_applicable"] },
+        "evidence_classification": { "enum": ["observed", "verified", "inferred", "unknown"] },
+        "severity": { "enum": ["note", "low", "medium", "high", "critical", ""] },
+        "observed_condition": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

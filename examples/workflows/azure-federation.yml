@@ -1,0 +1,49 @@
+name: Authorised Azure capability assessment
+on: { workflow_dispatch: {} }
+permissions: { contents: read }
+jobs:
+  scanner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: trustfall-azure-readonly
+    permissions:
+      contents: read
+      id-token: write # Additional authority: permits minting GitHub OIDC tokens in this job.
+    container:
+      image: ghcr.io/trustfall-ci/trustfall@sha256:REPLACE_WITH_RELEASE_DIGEST
+      options: --init --cap-drop=ALL --security-opt=no-new-privileges
+    env:
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+    steps:
+      - name: Write reviewed, read-only policy
+        shell: sh
+        run: |
+          cat > "$RUNNER_TEMP/trustfall.yaml" <<'POLICY'
+          version: "1"
+          mode: audit
+          fail_on: high
+          identity:
+            request_oidc: true
+            audience: api://AzureADTokenExchange
+          network:
+            concurrency: 2
+            targets: []
+            metadata: { enabled: false, providers: [] }
+          cloud:
+            azure:
+              enabled: true
+              audience: api://AzureADTokenExchange
+              scope: https://management.azure.com/.default
+              targets:
+                - name: subscription-read
+                  method: GET
+                  url: https://management.azure.com/subscriptions/00000000-0000-0000-0000-000000000000?api-version=2022-12-01
+                  expected_status: [200]
+                - name: subscription-role-assignment-discovery
+                  method: GET
+                  url: https://management.azure.com/subscriptions/00000000-0000-0000-0000-000000000000/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01
+                  expected_status: [200]
+          POLICY
+      - name: Assess explicitly scoped Azure operation
+        run: trustfall assess --profile custom --policy "$RUNNER_TEMP/trustfall.yaml" --output "$RUNNER_TEMP/report.json" --summary "$GITHUB_STEP_SUMMARY"

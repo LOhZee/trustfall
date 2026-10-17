@@ -1,0 +1,30 @@
+name: Hosted container-job integration
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  scanner:
+    if: ${{ vars.TRUSTFALL_INTEGRATION_IMAGE != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      # Configure this repository variable as an immutable ghcr.io/...@sha256:... reference.
+      image: ${{ vars.TRUSTFALL_INTEGRATION_IMAGE }}
+      options: --init --cap-drop=ALL --security-opt=no-new-privileges
+    steps:
+      - name: Verify genuine container-job execution
+        shell: sh
+        run: |
+          trustfall doctor
+          trustfall assess --profile hardened --no-network --output "$RUNNER_TEMP/report.json" --sarif "$RUNNER_TEMP/report.sarif" --summary "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: trustfall-container-integration
+          path: ${{ runner.temp }}/report.*
+          if-no-files-found: error

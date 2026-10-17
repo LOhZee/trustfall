@@ -1,0 +1,25 @@
+version: "1"
+mode: enforce
+fail_on: high
+deny_rules: [TF-ISO-007]
+expectations:
+  TF-ISO-001:
+    status: pass
+    condition: no effective Linux capabilities
+identity:
+  request_oidc: false
+  audience: trustfall
+network:
+  concurrency: 2
+  targets:
+    - name: approved-api
+      type: https
+      address: https://api.example.com/health
+      expect_reachable: true
+  metadata:
+    enabled: false
+    providers: []
+cloud:
+  azure:
+    enabled: false
+    targets: []

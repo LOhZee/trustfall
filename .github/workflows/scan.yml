@@ -1,0 +1,86 @@
+name: TrustFall reusable scan
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: Immutable TrustFall image reference (ghcr.io/...@sha256:...)
+        required: true
+        type: string
+      profile:
+        description: baseline or hardened
+        required: false
+        default: baseline
+        type: string
+      policy:
+        description: Reviewed inline policy YAML; required when profile is custom
+        required: false
+        default: ""
+        type: string
+      fail_on:
+        description: Optional enforcement severity
+        required: false
+        default: ""
+        type: string
+      no_network:
+        description: Disable every network-capable probe
+        required: false
+        default: true
+        type: boolean
+      probe_timeout:
+        description: Per-probe Go duration, such as 5s
+        required: false
+        default: 5s
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  scanner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: ${{ inputs.image }}
+      options: --init --cap-drop=ALL --security-opt=no-new-privileges
+    env:
+      TF_PROFILE: ${{ inputs.profile }}
+      TF_POLICY: ${{ inputs.policy }}
+      TF_FAIL_ON: ${{ inputs.fail_on }}
+      TF_NO_NETWORK: ${{ inputs.no_network }}
+      TF_PROBE_TIMEOUT: ${{ inputs.probe_timeout }}
+    steps:
+      - name: Assess container job
+        id: assess
+        shell: sh
+        run: |
+          set -eu
+          umask 077
+          set -- assess --profile "$TF_PROFILE" --timeout "$TF_PROBE_TIMEOUT" --output "$RUNNER_TEMP/trustfall.json" --sarif "$RUNNER_TEMP/trustfall.sarif" --summary "$GITHUB_STEP_SUMMARY"
+          if [ -n "$TF_POLICY" ]; then
+            printf '%s\n' "$TF_POLICY" > "$RUNNER_TEMP/trustfall-policy.yaml"
+            set -- "$@" --policy "$RUNNER_TEMP/trustfall-policy.yaml"
+          fi
+          if [ -n "$TF_FAIL_ON" ]; then set -- "$@" --fail-on "$TF_FAIL_ON"; fi
+          if [ "$TF_NO_NETWORK" = "true" ]; then set -- "$@" --no-network; fi
+          set +e
+          trustfall "$@"
+          status=$?
+          set -e
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Upload assessment reports
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: trustfall-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/trustfall.json
+            ${{ runner.temp }}/trustfall.sarif
+          if-no-files-found: error
+          retention-days: 14
+      - name: Apply TrustFall exit status
+        if: always()
+        shell: sh
+        env:
+          TF_EXIT_CODE: ${{ steps.assess.outputs.exit_code }}
+        run: exit "${TF_EXIT_CODE:-3}"

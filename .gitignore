@@ -1,1 +1,6 @@
 node_modules/
+/trustfall
+trustfall*.json
+trustfall*.sarif
+*.test
+coverage.out
