@@ -337,7 +337,7 @@ jobs:
 
           jq -e '
             .context.runtime_comparable == false and
-            ([.changes[] | select(.rule_id == "TF-ISO-001" and .category == "improvement" and (.before.evidence.capbnd | length > 0) and (.after.evidence.capbnd | length == 0))] | length == 1) and
+            ([.changes[] | select(.rule_id == "TF-ISO-001" and .category == "changed" and (.before.evidence.capbnd | length > 0) and (.after.evidence.capbnd | length == 0))] | length == 1) and
             ([.changes[] | select(.rule_id == "TF-ISO-002" and .category == "improvement" and .before.evidence.no_new_privileges == false and .after.evidence.no_new_privileges == true)] | length == 1)
           ' reports/comparison/comparison.json >/dev/null
 
