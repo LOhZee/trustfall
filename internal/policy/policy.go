@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -49,7 +50,24 @@ type Metadata struct {
 	Providers []string `yaml:"providers" json:"providers"`
 }
 type Cloud struct {
+	AWS   AWS   `yaml:"aws" json:"aws"`
 	Azure Azure `yaml:"azure" json:"azure"`
+	GCP   GCP   `yaml:"gcp" json:"gcp"`
+}
+type AWS struct {
+	Enabled     bool        `yaml:"enabled" json:"enabled"`
+	Audience    string      `yaml:"audience" json:"audience"`
+	RoleARN     string      `yaml:"role_arn" json:"role_arn"`
+	SessionName string      `yaml:"session_name" json:"session_name"`
+	Targets     []AWSTarget `yaml:"targets" json:"targets"`
+}
+type AWSTarget struct {
+	Name           string `yaml:"name" json:"name"`
+	URL            string `yaml:"url" json:"url"`
+	Service        string `yaml:"service" json:"service"`
+	Region         string `yaml:"region" json:"region"`
+	Method         string `yaml:"method" json:"method"`
+	ExpectedStatus []int  `yaml:"expected_status" json:"expected_status"`
 }
 type Azure struct {
 	Enabled  bool          `yaml:"enabled" json:"enabled"`
@@ -63,6 +81,24 @@ type AzureTarget struct {
 	Method         string `yaml:"method" json:"method"`
 	ExpectedStatus []int  `yaml:"expected_status" json:"expected_status"`
 }
+type GCP struct {
+	Enabled                  bool        `yaml:"enabled" json:"enabled"`
+	WorkloadIdentityProvider string      `yaml:"workload_identity_provider" json:"workload_identity_provider"`
+	Audience                 string      `yaml:"audience" json:"audience"`
+	Scope                    string      `yaml:"scope" json:"scope"`
+	Targets                  []GCPTarget `yaml:"targets" json:"targets"`
+}
+type GCPTarget struct {
+	Name           string `yaml:"name" json:"name"`
+	URL            string `yaml:"url" json:"url"`
+	Method         string `yaml:"method" json:"method"`
+	ExpectedStatus []int  `yaml:"expected_status" json:"expected_status"`
+}
+
+var awsRoleARN = regexp.MustCompile(`^arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]{1,512}$`)
+var awsSessionName = regexp.MustCompile(`^[A-Za-z0-9+=,.@_-]{2,64}$`)
+var awsEndpointPart = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+var gcpProviderName = regexp.MustCompile(`^projects/[0-9]+/locations/global/workloadIdentityPools/[A-Za-z0-9_-]+/providers/[A-Za-z0-9_-]+$`)
 
 func Builtin(profile string) (Policy, error) {
 	p := Policy{Version: "1", Mode: "audit", FailOn: evidence.SeverityHigh, Expectations: map[string]Expectation{}, Network: Network{Concurrency: 4}, Identity: Identity{Audience: "trustfall"}}
@@ -180,6 +216,36 @@ func (p *Policy) Validate() error {
 	if len(p.Identity.Audience) > 255 {
 		return fmt.Errorf("OIDC audience is too long")
 	}
+	if p.Cloud.AWS.Enabled {
+		if p.Cloud.AWS.Audience == "" {
+			p.Cloud.AWS.Audience = "sts.amazonaws.com"
+		}
+		if p.Cloud.AWS.Audience != "sts.amazonaws.com" {
+			return fmt.Errorf("cloud.aws.audience must be sts.amazonaws.com")
+		}
+		if !awsRoleARN.MatchString(p.Cloud.AWS.RoleARN) {
+			return fmt.Errorf("cloud.aws.role_arn must be a valid IAM role ARN")
+		}
+		if p.Cloud.AWS.SessionName == "" {
+			p.Cloud.AWS.SessionName = "trustfall"
+		}
+		if !awsSessionName.MatchString(p.Cloud.AWS.SessionName) {
+			return fmt.Errorf("cloud.aws.session_name must be 2-64 AWS-safe characters")
+		}
+		if len(p.Cloud.AWS.Targets) == 0 {
+			return fmt.Errorf("cloud.aws.enabled requires at least one explicitly scoped target")
+		}
+		seen := map[string]bool{}
+		for _, target := range p.Cloud.AWS.Targets {
+			if target.Name == "" || seen[target.Name] {
+				return fmt.Errorf("AWS targets need unique non-empty names")
+			}
+			seen[target.Name] = true
+			if err := validateAWSTarget(target); err != nil {
+				return fmt.Errorf("AWS target %q: %w", target.Name, err)
+			}
+		}
+	}
 	if p.Cloud.Azure.Enabled {
 		if p.Cloud.Azure.Audience == "" {
 			p.Cloud.Azure.Audience = "api://AzureADTokenExchange"
@@ -200,7 +266,7 @@ func (p *Policy) Validate() error {
 			}
 			azureNames[t.Name] = true
 			u, e := url.Parse(t.URL)
-			if e != nil || u.Scheme != "https" || !strings.EqualFold(u.Hostname(), "management.azure.com") || u.User != nil {
+			if e != nil || u.Scheme != "https" || !strings.EqualFold(u.Hostname(), "management.azure.com") || u.User != nil || u.Port() != "" || u.Fragment != "" {
 				return fmt.Errorf("Azure target %q must be an https://management.azure.com URL without userinfo", t.Name)
 			}
 			if hasSecretQuery(u) {
@@ -209,12 +275,124 @@ func (p *Policy) Validate() error {
 			if t.Method != "" && strings.ToUpper(t.Method) != "GET" && strings.ToUpper(t.Method) != "HEAD" {
 				return fmt.Errorf("Azure target %q method must be GET or HEAD", t.Name)
 			}
-			for _, status := range t.ExpectedStatus {
-				if status < 100 || status > 599 {
-					return fmt.Errorf("Azure target %q has invalid expected HTTP status %d", t.Name, status)
-				}
+			if err := validateExpectedStatuses(t.ExpectedStatus); err != nil {
+				return fmt.Errorf("Azure target %q: %w", t.Name, err)
 			}
 		}
+	}
+	if p.Cloud.GCP.Enabled {
+		if !gcpProviderName.MatchString(p.Cloud.GCP.WorkloadIdentityProvider) {
+			return fmt.Errorf("cloud.gcp.workload_identity_provider must be a full provider resource name using a project number")
+		}
+		expectedAudience := "https://iam.googleapis.com/" + p.Cloud.GCP.WorkloadIdentityProvider
+		if p.Cloud.GCP.Audience == "" {
+			p.Cloud.GCP.Audience = expectedAudience
+		}
+		if p.Cloud.GCP.Audience != expectedAudience {
+			return fmt.Errorf("cloud.gcp.audience must equal %s", expectedAudience)
+		}
+		if p.Cloud.GCP.Scope == "" {
+			p.Cloud.GCP.Scope = "https://www.googleapis.com/auth/cloud-platform"
+		}
+		if p.Cloud.GCP.Scope != "https://www.googleapis.com/auth/cloud-platform" {
+			return fmt.Errorf("cloud.gcp.scope must be https://www.googleapis.com/auth/cloud-platform")
+		}
+		if len(p.Cloud.GCP.Targets) == 0 {
+			return fmt.Errorf("cloud.gcp.enabled requires at least one explicitly scoped target")
+		}
+		seen := map[string]bool{}
+		for _, target := range p.Cloud.GCP.Targets {
+			if target.Name == "" || seen[target.Name] {
+				return fmt.Errorf("GCP targets need unique non-empty names")
+			}
+			seen[target.Name] = true
+			if err := validateGCPTarget(target); err != nil {
+				return fmt.Errorf("GCP target %q: %w", target.Name, err)
+			}
+		}
+	}
+	return nil
+}
+
+func validateAWSTarget(target AWSTarget) error {
+	service := strings.ToLower(target.Service)
+	region := strings.ToLower(target.Region)
+	if service != target.Service || region != target.Region || !awsEndpointPart.MatchString(service) || !awsEndpointPart.MatchString(region) {
+		return fmt.Errorf("service and region must be explicit AWS identifiers")
+	}
+	u, err := url.Parse(target.URL)
+	if err != nil || u.Scheme != "https" || u.User != nil || u.Fragment != "" || u.Port() != "" {
+		return fmt.Errorf("URL must use https without userinfo or a fragment")
+	}
+	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	regional := service + "." + region + ".amazonaws.com"
+	modern := service + "." + region + ".api.aws"
+	global := service + ".amazonaws.com"
+	if host != regional && host != modern && !((service == "iam" || service == "sts" || service == "s3") && host == global) {
+		return fmt.Errorf("host must match the configured AWS service and region")
+	}
+	if host == global && region != "us-east-1" {
+		return fmt.Errorf("global AWS endpoints must use the us-east-1 signing region")
+	}
+	if hasSecretQuery(u) {
+		return fmt.Errorf("URL must not contain credential-like query parameters")
+	}
+	if target.Method != "" && strings.ToUpper(target.Method) != "GET" && strings.ToUpper(target.Method) != "HEAD" {
+		return fmt.Errorf("method must be GET or HEAD")
+	}
+	query := u.Query()
+	for key := range query {
+		if strings.EqualFold(key, "Action") && key != "Action" {
+			return fmt.Errorf("AWS query parameter Action must use its canonical case")
+		}
+	}
+	if actions := query["Action"]; len(actions) > 1 {
+		return fmt.Errorf("AWS query must not contain multiple Action parameters")
+	} else if len(actions) == 1 && !allowedAWSQueryAction(service, actions[0]) {
+		return fmt.Errorf("query Action %q is not in TrustFall's read-only allowlist for %s", actions[0], service)
+	}
+	return validateExpectedStatuses(target.ExpectedStatus)
+}
+
+func allowedAWSQueryAction(service, action string) bool {
+	allowed := map[string]map[string]bool{
+		"sts":           {"GetCallerIdentity": true},
+		"iam":           {"GetRole": true, "GetRolePolicy": true, "ListAttachedRolePolicies": true, "ListRolePolicies": true, "ListRoleTags": true},
+		"ec2":           {"DescribeInstances": true, "DescribeNetworkInterfaces": true, "DescribeRouteTables": true, "DescribeSecurityGroups": true, "DescribeSubnets": true, "DescribeVpcs": true},
+		"s3":            {"GetBucketLocation": true, "GetBucketPolicyStatus": true, "GetPublicAccessBlock": true, "ListBuckets": true},
+		"organizations": {"DescribeOrganization": true, "ListAccounts": true, "ListRoots": true},
+	}
+	return allowed[service][action]
+}
+
+func validateGCPTarget(target GCPTarget) error {
+	u, err := url.Parse(target.URL)
+	if err != nil || u.Scheme != "https" || u.User != nil || u.Fragment != "" || u.Port() != "" {
+		return fmt.Errorf("URL must use https without userinfo or a fragment")
+	}
+	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	if host == "googleapis.com" || !strings.HasSuffix(host, ".googleapis.com") {
+		return fmt.Errorf("host must be a Google API endpoint")
+	}
+	if hasSecretQuery(u) {
+		return fmt.Errorf("URL must not contain credential-like query parameters")
+	}
+	if target.Method != "" && strings.ToUpper(target.Method) != "GET" && strings.ToUpper(target.Method) != "HEAD" {
+		return fmt.Errorf("method must be GET or HEAD")
+	}
+	return validateExpectedStatuses(target.ExpectedStatus)
+}
+
+func validateExpectedStatuses(statuses []int) error {
+	seen := map[int]bool{}
+	for _, status := range statuses {
+		if status < 100 || status > 599 {
+			return fmt.Errorf("invalid expected HTTP status %d", status)
+		}
+		if seen[status] {
+			return fmt.Errorf("duplicate expected HTTP status %d", status)
+		}
+		seen[status] = true
 	}
 	return nil
 }
@@ -247,8 +425,8 @@ func validateNetworkTarget(t NetworkTarget) error {
 func hasSecretQuery(u *url.URL) bool {
 	for key := range u.Query() {
 		k := strings.ToLower(key)
-		for _, part := range []string{"token", "secret", "password", "signature", "sig", "api_key", "apikey"} {
-			if k == part || strings.HasSuffix(k, "_"+part) {
+		for _, part := range []string{"token", "secret", "password", "signature", "credential", "access_key", "api_key", "apikey"} {
+			if k == part || strings.Contains(k, part) {
 				return true
 			}
 		}

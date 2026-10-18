@@ -8,7 +8,7 @@ import (
 )
 
 var jwtPattern = regexp.MustCompile(`(?i)\beyJ[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9_-]{8,}\b`)
-var querySecretPattern = regexp.MustCompile(`(?i)([?&](?:token|secret|api_?key|signature|sig|password)=)[^&\s"']+`)
+var querySecretPattern = regexp.MustCompile(`(?i)([?&][^=&\s"']*(?:token|secret|api_?key|signature|password|credential|access_?key)[^=&\s"']*=)[^&\s"']+`)
 
 func sensitiveKey(key string) bool {
 	k := strings.ToLower(key)

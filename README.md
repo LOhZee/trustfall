@@ -52,9 +52,9 @@ This creates a genuine `jobs.scanner.container` job with `--init --cap-drop=ALL 
 | Container isolation | capabilities, seccomp, LSM label, user mappings, cgroups, mounts, runtime sockets | none |
 | Credential exposure | matching environment names and credential-file metadata | none; values and file contents are never read |
 | Network boundaries | configured target definitions | DNS, one TCP connection, or one HTTPS HEAD per allowlisted target; optional body-free metadata HEAD |
-| Cloud capabilities | configured provider and operation | Azure OIDC exchange and explicit GET/HEAD targets only |
+| Cloud capabilities | configured provider and operation | AWS, Azure, or GCP workload federation and explicit read-only targets |
 
-TrustFall never scans address ranges, enumerates hosts, retrieves metadata credentials, modifies cloud resources, attempts a breakout, or uploads an environment dump. AWS and GCP implement the provider interface only at the architecture level in this initial release; active cloud capability operations currently support Azure. See [Security model](docs/SECURITY_MODEL.md).
+TrustFall never scans address ranges, enumerates hosts, retrieves metadata credentials, modifies cloud resources, attempts a breakout, or uploads an environment dump. Active cloud support is operation-oriented: AWS uses GitHub OIDC with `AssumeRoleWithWebIdentity` and SigV4-signed GET/HEAD requests, Azure uses workload identity exchange and `management.azure.com` GET/HEAD requests, and GCP uses direct Workload Identity Federation with `*.googleapis.com` GET/HEAD requests. Response bodies and temporary credentials are not recorded. See [Security model](docs/SECURITY_MODEL.md).
 
 ## CLI
 
@@ -110,9 +110,9 @@ The reusable workflow is preferred because it owns and assesses a real container
 
 Network, metadata and cloud destinations come only from the policy allowlist. `--no-network` overrides every network-capable probe. Passive [`scan.yml`](.github/workflows/scan.yml) has only `contents: read`; it observes OIDC facility presence and explicitly reports that issuance was not tested. OIDC-enabled [`scan-oidc.yml`](.github/workflows/scan-oidc.yml) declares `id-token: write`, requests a token, and locally validates issuer, requested audience, subject presence and temporal claims. It discards the JWT and does not independently verify its signature. External callers must also explicitly grant `id-token: write` to the job that calls the reusable workflow.
 
-OIDC facility presence is not token issuance. Token issuance is not cloud federation. Cloud federation is not successful resource access. TrustFall reports each operation separately and never requests cloud credentials merely because OIDC is enabled. Azure testing additionally requires `cloud.azure.enabled: true`, valid workload-identity identifiers, and explicit `management.azure.com` GET/HEAD targets. A role-assignment list target records only the returned object count, never assignment fields or a response body.
+OIDC facility presence is not token issuance. Token issuance is not cloud federation. Cloud federation is not successful resource access. TrustFall reports each operation separately and never requests cloud credentials merely because OIDC is enabled. Every cloud provider additionally requires its own `cloud.<provider>.enabled: true` configuration and explicit read-only targets. AWS query APIs accept only a small operation allowlist, Azure targets are restricted to `management.azure.com`, and GCP targets are restricted to `*.googleapis.com`. An Azure role-assignment list target records only the returned object count, never assignment fields or a response body. Protected manual examples are provided for [AWS](examples/workflows/aws-federation.yml), [Azure](examples/workflows/azure-federation.yml), and [GCP](examples/workflows/gcp-federation.yml).
 
-Do not add `id-token: write` to pull-request workflows merely to remove an unknown result. That permission gives the job additional identity-minting authority. The Azure example is manual, environment-protected, and read-only.
+Do not add `id-token: write` to pull-request workflows merely to remove an unknown result. That permission gives the job additional identity-minting authority. The cloud federation examples are manual, environment-protected, and read-only.
 
 ## Supply chain and releases
 

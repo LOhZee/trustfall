@@ -16,6 +16,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Lint GitHub Actions workflows
+        env:
+          ACTIONLINT_VERSION: "1.7.12"
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+            --output "$archive"
+          printf '%s  %s\n' "$ACTIONLINT_SHA256" "$archive" | sha256sum --check --status
+          tar --extract --gzip --file "$archive" --directory "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" .github/workflows/*.yml examples/workflows/*.yml
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -40,6 +52,8 @@ jobs:
           go run github.com/santhosh-tekuri/jsonschema/cmd/jv@v0.7.0 schemas/report-v1.schema.json report.json
           go run github.com/santhosh-tekuri/jsonschema/cmd/jv@v0.7.0 schemas/comparison-v1.schema.json comparison.json
           go run github.com/santhosh-tekuri/jsonschema/cmd/jv@v0.7.0 "$RUNNER_TEMP/sarif-schema.json" report.sarif
+          jq -n '{version:"1",mode:"audit",cloud:{aws:{enabled:true,role_arn:"arn:aws:iam::123456789012:role/trustfall",targets:[{name:"identity",url:"https://sts.us-east-1.amazonaws.com/?Action=GetCallerIdentity&Version=2011-06-15",service:"sts",region:"us-east-1"}]},gcp:{enabled:true,workload_identity_provider:"projects/123/locations/global/workloadIdentityPools/github/providers/trustfall",targets:[{name:"project",url:"https://cloudresourcemanager.googleapis.com/v3/projects/example"}]}}}' > "$RUNNER_TEMP/policy.json"
+          go run github.com/santhosh-tekuri/jsonschema/cmd/jv@v0.7.0 schemas/policy-v1.schema.json "$RUNNER_TEMP/policy.json"
           jq -e '.schema_version == "1.0.0" and (.findings | length > 0)' report.json
 
   container:

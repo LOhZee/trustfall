@@ -15,6 +15,7 @@ The matrix checks:
 | No OIDC permission | An attempted issuance is visible as unknown, not secure or verified. |
 | OIDC-enabled | Token issuance succeeds and selected issuer, audience, subject and temporal claims pass local semantic validation; the raw JWT is discarded. |
 | Network disabled | Network-capable probes remain visible as disabled/unknown evidence. |
+| Network enabled | Three explicit public DNS/TCP/HTTPS operations must verify; body-free metadata probes remain visible whether verified or inconclusive. |
 | Enforcement | A deliberately mismatched expectation returns exit code 2. |
 | Malformed policy | Strict decoding returns exit code 1. |
 | Reports | JSON and SARIF are generated and uploaded; comparison uses the two actual runtime reports. |

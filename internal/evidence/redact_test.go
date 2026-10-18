@@ -21,6 +21,16 @@ func TestRedactMapNeverEmitsSecretsOrJWTs(t *testing.T) {
 	}
 }
 
+func TestRedactStringCoversProviderSignedQueryParameters(t *testing.T) {
+	input := "request failed: https://example.com/object?X-Amz-Credential=temporary-id&X-Amz-Signature=signature-value&X-Goog-Access-Token=token-value"
+	output := RedactString(input)
+	for _, secret := range []string{"temporary-id", "signature-value", "token-value"} {
+		if strings.Contains(output, secret) {
+			t.Fatalf("provider query credential %q was not redacted: %s", secret, output)
+		}
+	}
+}
+
 func TestFingerprintStableAcrossStatusChanges(t *testing.T) {
 	a := NewFinding("TF-X", "Title", "module", SeverityLow, Observed, StatusPass, "one")
 	b := a

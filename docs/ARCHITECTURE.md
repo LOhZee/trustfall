@@ -16,7 +16,7 @@ Stable rules describe one security property. Multi-target operations add the pol
 
 ## Trust boundaries
 
-The CLI treats the process environment, procfs, mounts, policy file, DNS, remote endpoints and provider responses as untrusted input. It limits policy files and HTTP bodies to 1 MiB, never records token responses, follows no cloud redirects, restricts HTTPS redirects to the original origin for generic probes, and restricts Azure targets to `management.azure.com` GET/HEAD operations.
+The CLI treats the process environment, procfs, mounts, policy file, DNS, remote endpoints and provider responses as untrusted input. It limits policy files and token responses to 1 MiB, never records tokens or cloud response bodies, follows no cloud redirects, and restricts HTTPS redirects to the original origin for generic probes. AWS targets must match their declared service and region and permit only GET/HEAD plus an allowlist for query-style actions. Azure targets are limited to `management.azure.com` GET/HEAD operations. GCP targets are limited to `*.googleapis.com` GET/HEAD operations, and the GitHub/STS audiences are derived from one validated workload identity provider name.
 
 The passive and OIDC-enabled reusable workflows each own a real GitHub container job. Their permissions are statically distinct because a running job cannot elevate itself to `id-token: write`. The composite Marketplace action runs inside the caller’s already-created job and therefore cannot assess a boundary it did not create. This is a GitHub Actions platform distinction, not an implementation detail.
 
@@ -26,5 +26,6 @@ The passive and OIDC-enabled reusable workflows each own a real GitHub container
 - Seccomp mode and LSM labels are observations, not proof that their policies block a particular exploit.
 - Filesystem credential probes inspect metadata and accessibility only, never contents.
 - TCP/HTTPS success proves one connection/request. Failure remains inconclusive.
-- Azure permission discovery is operation-based. TrustFall does not synthesize a universal effective permission set from one response.
-- AWS/GCP active cloud providers are not implemented in v1. Metadata reachability has explicit, body-free probes for all three providers.
+- Cloud permission discovery is operation-based. TrustFall does not synthesize a universal effective permission set from one response.
+- AWS federation currently supports the commercial `aws` partition. Alternate partitions require separately validated STS audiences and endpoints.
+- GCP supports direct Workload Identity Federation. Service-account impersonation is intentionally not performed automatically.

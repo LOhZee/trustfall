@@ -22,6 +22,7 @@
             "enabled": { "type": "boolean" },
             "providers": { "type": "array", "items": { "enum": ["aws", "azure", "gcp"] }, "uniqueItems": true }
           },
+          "allOf": [{ "if": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] }, "then": { "required": ["providers"], "properties": { "providers": { "minItems": 1 } } } }],
           "additionalProperties": false
         }
       },
@@ -30,6 +31,18 @@
     "cloud": {
       "type": "object",
       "properties": {
+        "aws": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "audience": { "const": "sts.amazonaws.com" },
+            "role_arn": { "type": "string", "pattern": "^arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]{1,512}$" },
+            "session_name": { "type": "string", "minLength": 2, "maxLength": 64, "pattern": "^[A-Za-z0-9+=,.@_-]+$" },
+            "targets": { "type": "array", "items": { "$ref": "#/$defs/awsTarget" } }
+          },
+          "allOf": [{ "if": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] }, "then": { "required": ["role_arn", "targets"], "properties": { "targets": { "minItems": 1 } } } }],
+          "additionalProperties": false
+        },
         "azure": {
           "type": "object",
           "properties": {
@@ -38,6 +51,19 @@
             "scope": { "const": "https://management.azure.com/.default" },
             "targets": { "type": "array", "items": { "$ref": "#/$defs/azureTarget" } }
           },
+          "allOf": [{ "if": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] }, "then": { "required": ["targets"], "properties": { "targets": { "minItems": 1 } } } }],
+          "additionalProperties": false
+        },
+        "gcp": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "workload_identity_provider": { "type": "string", "pattern": "^projects/[0-9]+/locations/global/workloadIdentityPools/[A-Za-z0-9_-]+/providers/[A-Za-z0-9_-]+$" },
+            "audience": { "type": "string", "pattern": "^https://iam\\.googleapis\\.com/projects/[0-9]+/locations/global/workloadIdentityPools/[A-Za-z0-9_-]+/providers/[A-Za-z0-9_-]+$" },
+            "scope": { "const": "https://www.googleapis.com/auth/cloud-platform" },
+            "targets": { "type": "array", "items": { "$ref": "#/$defs/gcpTarget" } }
+          },
+          "allOf": [{ "if": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] }, "then": { "required": ["workload_identity_provider", "targets"], "properties": { "targets": { "minItems": 1 } } } }],
           "additionalProperties": false
         }
       },
@@ -63,6 +89,30 @@
       "properties": {
         "name": { "type": "string", "minLength": 1 },
         "url": { "type": "string", "format": "uri", "pattern": "^https://management\\.azure\\.com/" },
+        "method": { "enum": ["GET", "HEAD", "get", "head", ""] },
+        "expected_status": { "type": "array", "items": { "type": "integer", "minimum": 100, "maximum": 599 }, "uniqueItems": true }
+      },
+      "additionalProperties": false
+    },
+    "awsTarget": {
+      "type": "object",
+      "required": ["name", "url", "service", "region"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "url": { "type": "string", "format": "uri", "pattern": "^https://" },
+        "service": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$" },
+        "region": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$" },
+        "method": { "enum": ["GET", "HEAD", "get", "head", ""] },
+        "expected_status": { "type": "array", "items": { "type": "integer", "minimum": 100, "maximum": 599 }, "uniqueItems": true }
+      },
+      "additionalProperties": false
+    },
+    "gcpTarget": {
+      "type": "object",
+      "required": ["name", "url"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "url": { "type": "string", "format": "uri", "pattern": "^https://[^/]+\\.googleapis\\.com(?:/|$)" },
         "method": { "enum": ["GET", "HEAD", "get", "head", ""] },
         "expected_status": { "type": "array", "items": { "type": "integer", "minimum": 100, "maximum": 599 }, "uniqueItems": true }
       },

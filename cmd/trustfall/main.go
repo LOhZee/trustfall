@@ -74,6 +74,10 @@ func versionCommand(args []string, stdout, stderr io.Writer) int {
 	if fs.Parse(args) != nil {
 		return exitUsage
 	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "version accepts no positional arguments")
+		return exitUsage
+	}
 	if *asJSON {
 		_ = json.NewEncoder(stdout).Encode(map[string]string{"version": version, "commit": commit, "build_date": buildDate, "go": runtime.Version()})
 	} else {
@@ -84,6 +88,10 @@ func versionCommand(args []string, stdout, stderr io.Writer) int {
 func doctorCommand(args []string, stdout, stderr io.Writer) int {
 	fs := newFlags("doctor", stderr)
 	if fs.Parse(args) != nil {
+		return exitUsage
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "doctor accepts no positional arguments")
 		return exitUsage
 	}
 	checks := []map[string]any{{"name": "linux", "ok": runtime.GOOS == "linux"}, {"name": "proc_status", "ok": readable("/proc/self/status")}, {"name": "proc_mountinfo", "ok": readable("/proc/self/mountinfo")}}
@@ -198,7 +206,18 @@ func assessCommand(args []string, stdout, stderr io.Writer) int {
 		level = slog.LevelDebug
 	}
 	logger := slog.New(slog.NewJSONHandler(stderr, &slog.HandlerOptions{Level: level}))
-	probes := []engine.Probe{identity.Probe{}, isolation.Probe{}, credentials.Probe{}, network.Probe{Targets: pol.Network.Targets, Concurrency: pol.Network.Concurrency}, network.MetadataProbe{Enabled: pol.Network.Metadata.Enabled, Providers: pol.Network.Metadata.Providers}, cloud.Probe{Providers: []cloud.Provider{cloud.Azure{Config: pol.Cloud.Azure}}}}
+	probes := []engine.Probe{
+		identity.Probe{},
+		isolation.Probe{},
+		credentials.Probe{},
+		network.Probe{Targets: pol.Network.Targets, Concurrency: pol.Network.Concurrency},
+		network.MetadataProbe{Enabled: pol.Network.Metadata.Enabled, Providers: pol.Network.Metadata.Providers},
+		cloud.Probe{Providers: []cloud.Provider{
+			cloud.AWS{Config: pol.Cloud.AWS},
+			cloud.Azure{Config: pol.Cloud.Azure},
+			cloud.GCP{Config: pol.Cloud.GCP},
+		}},
+	}
 	e := engine.Engine{Probes: probes}
 	cfg := engine.Config{Profile: *profile, NoNetwork: *noNetwork, ProbeTimeout: *timeout, Logger: logger, Options: map[string]any{"request_oidc": pol.Identity.RequestOIDC, "oidc_audience": pol.Identity.Audience}}
 	report, probeErrors := e.Run(context.Background(), cfg, version, pol.Mode)
@@ -258,6 +277,10 @@ func withOutput(path string, appendMode bool, stdout io.Writer, fn func(io.Write
 	}
 	f, e := os.OpenFile(path, flags, 0o600)
 	if e != nil {
+		return e
+	}
+	if e = f.Chmod(0o600); e != nil {
+		f.Close()
 		return e
 	}
 	if e = fn(f); e != nil {

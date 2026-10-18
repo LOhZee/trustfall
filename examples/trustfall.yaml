@@ -20,6 +20,12 @@ network:
     enabled: false
     providers: []
 cloud:
+  aws:
+    enabled: false
+    targets: []
   azure:
+    enabled: false
+    targets: []
+  gcp:
     enabled: false
     targets: []

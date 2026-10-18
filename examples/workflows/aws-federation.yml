@@ -1,0 +1,46 @@
+name: Authorised AWS capability assessment
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  assess:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: trustfall-aws-readonly
+    container:
+      image: ghcr.io/lohzee/trustfall@sha256:REPLACE_WITH_RELEASE_DIGEST
+      options: --init --cap-drop=ALL --security-opt=no-new-privileges
+    env:
+      AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+    steps:
+      - name: Assess one explicitly scoped AWS operation
+        shell: sh
+        run: |
+          set -eu
+          case "$AWS_ROLE_ARN" in
+            arn:aws:iam::????????????:role/*) ;;
+            *) echo "AWS_ROLE_ARN must be a commercial-partition IAM role ARN" >&2; exit 1 ;;
+          esac
+          umask 077
+          printf '%s\n' \
+            'version: "1"' \
+            'mode: audit' \
+            'cloud:' \
+            '  aws:' \
+            '    enabled: true' \
+            "    role_arn: $AWS_ROLE_ARN" \
+            '    targets:' \
+            '      - name: caller-identity' \
+            '        service: sts' \
+            '        region: us-east-1' \
+            '        url: https://sts.us-east-1.amazonaws.com/?Action=GetCallerIdentity&Version=2011-06-15' \
+            '        method: GET' \
+            '        expected_status: [200]' > "$RUNNER_TEMP/trustfall-aws.yaml"
+          trustfall assess --profile custom --policy "$RUNNER_TEMP/trustfall-aws.yaml" \
+            --output "$RUNNER_TEMP/trustfall-aws.json" --sarif "$RUNNER_TEMP/trustfall-aws.sarif" \
+            --summary "$GITHUB_STEP_SUMMARY"

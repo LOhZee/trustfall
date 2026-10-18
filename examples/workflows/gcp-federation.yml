@@ -1,0 +1,47 @@
+name: Authorised GCP capability assessment
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  assess:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: trustfall-gcp-readonly
+    container:
+      image: ghcr.io/lohzee/trustfall@sha256:REPLACE_WITH_RELEASE_DIGEST
+      options: --init --cap-drop=ALL --security-opt=no-new-privileges
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+    steps:
+      - name: Assess one explicitly scoped GCP operation
+        shell: sh
+        run: |
+          set -eu
+          case "$GCP_PROJECT_ID" in ''|*[!a-z0-9-]*) echo "invalid GCP_PROJECT_ID" >&2; exit 1 ;; esac
+          case "$GCP_WORKLOAD_IDENTITY_PROVIDER" in
+            projects/*/locations/global/workloadIdentityPools/*/providers/*) ;;
+            *) echo "invalid GCP_WORKLOAD_IDENTITY_PROVIDER" >&2; exit 1 ;;
+          esac
+          case "$GCP_WORKLOAD_IDENTITY_PROVIDER" in *[!A-Za-z0-9_/-]*) echo "invalid GCP_WORKLOAD_IDENTITY_PROVIDER characters" >&2; exit 1 ;; esac
+          umask 077
+          printf '%s\n' \
+            'version: "1"' \
+            'mode: audit' \
+            'cloud:' \
+            '  gcp:' \
+            '    enabled: true' \
+            "    workload_identity_provider: $GCP_WORKLOAD_IDENTITY_PROVIDER" \
+            '    targets:' \
+            '      - name: project' \
+            "        url: https://cloudresourcemanager.googleapis.com/v3/projects/$GCP_PROJECT_ID" \
+            '        method: GET' \
+            '        expected_status: [200]' > "$RUNNER_TEMP/trustfall-gcp.yaml"
+          trustfall assess --profile custom --policy "$RUNNER_TEMP/trustfall-gcp.yaml" \
+            --output "$RUNNER_TEMP/trustfall-gcp.json" --sarif "$RUNNER_TEMP/trustfall-gcp.sarif" \
+            --summary "$GITHUB_STEP_SUMMARY"

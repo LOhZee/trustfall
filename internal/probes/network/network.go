@@ -21,7 +21,11 @@ type Probe struct {
 	Concurrency int
 	Client      *http.Client
 	Resolver    *net.Resolver
-	Dialer      *net.Dialer
+	Dialer      contextDialer
+}
+
+type contextDialer interface {
+	DialContext(context.Context, string, string) (net.Conn, error)
 }
 
 func (Probe) Metadata() engine.Metadata {
@@ -88,15 +92,7 @@ func (p Probe) test(ctx context.Context, t policy.NetworkTarget) evidence.Findin
 	case "https":
 		client := p.Client
 		if client == nil {
-			client = &http.Client{Timeout: 4 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				if len(via) >= 3 {
-					return fmt.Errorf("too many redirects")
-				}
-				if req.URL.Scheme != "https" || req.URL.Hostname() != via[0].URL.Hostname() {
-					return fmt.Errorf("cross-origin redirect refused")
-				}
-				return nil
-			}}
+			client = defaultHTTPClient()
 		}
 		var req *http.Request
 		req, err = http.NewRequestWithContext(ctx, http.MethodHead, t.Address, nil)
@@ -130,6 +126,18 @@ func (p Probe) test(ctx context.Context, t policy.NetworkTarget) evidence.Findin
 		}
 	}
 	return f
+}
+
+func defaultHTTPClient() *http.Client {
+	return &http.Client{Timeout: 4 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 3 {
+			return fmt.Errorf("too many redirects")
+		}
+		if req.URL.Scheme != "https" || req.URL.Hostname() != via[0].URL.Hostname() {
+			return fmt.Errorf("cross-origin redirect refused")
+		}
+		return nil
+	}}
 }
 func failed(t policy.NetworkTarget, err error) evidence.Finding {
 	f := evidence.NewFinding("TF-NET-001", "Allowlisted network reachability: "+t.Name, "network", evidence.SeverityNote, evidence.Unknown, evidence.StatusUnknown, "the configured operation did not succeed: "+evidence.SafeError(err))

@@ -39,7 +39,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -178,6 +178,56 @@ jobs:
         with:
           name: runtime-oidc
           path: ${{ runner.temp }}/oidc.json
+          if-no-files-found: error
+
+  network-boundaries:
+    needs: build-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    container:
+      image: ghcr.io/lohzee/trustfall@${{ needs.build-image.outputs.digest }}
+      options: --init --cap-drop=ALL --security-opt=no-new-privileges
+    env:
+      TRUSTFALL_CONTAINER_IMAGE: ghcr.io/lohzee/trustfall@${{ needs.build-image.outputs.digest }}
+    steps:
+      - name: Verify explicitly allowlisted public network operations
+        shell: sh
+        run: |
+          set -eu
+          umask 077
+          printf '%s\n' \
+            'version: "1"' \
+            'mode: audit' \
+            'network:' \
+            '  concurrency: 3' \
+            '  targets:' \
+            '    - name: github-dns' \
+            '      type: dns' \
+            '      address: github.com' \
+            '      expect_reachable: true' \
+            '    - name: github-tcp' \
+            '      type: tcp' \
+            '      address: github.com:443' \
+            '      expect_reachable: true' \
+            '    - name: github-https' \
+            '      type: https' \
+            '      address: https://github.com/' \
+            '      expect_reachable: true' \
+            '  metadata:' \
+            '    enabled: true' \
+            '    providers: [aws, azure, gcp]' > "$RUNNER_TEMP/network.yaml"
+          trustfall assess --profile custom --policy "$RUNNER_TEMP/network.yaml" --timeout 15s \
+            --output "$RUNNER_TEMP/network.json" --sarif "$RUNNER_TEMP/network.sarif" \
+            --summary "$GITHUB_STEP_SUMMARY"
+          verified_targets="$(awk '/"rule_id": "TF-NET-001"/ { target=1; next } target && /"evidence_classification": "verified"/ { count++; target=0 } END { print count+0 }' "$RUNNER_TEMP/network.json")"
+          test "$verified_targets" -eq 3
+          test "$(grep -c '"'"'"rule_id"'"'": "'"'"TF-NET-002"'"'"' "$RUNNER_TEMP/network.json")" -eq 3
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: runtime-network
+          path: ${{ runner.temp }}/network.*
           if-no-files-found: error
 
   compare:
