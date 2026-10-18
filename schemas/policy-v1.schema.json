@@ -79,8 +79,10 @@
         "name": { "type": "string", "minLength": 1 },
         "type": { "enum": ["dns", "tcp", "https"] },
         "address": { "type": "string", "minLength": 1 },
-        "expect_reachable": { "type": "boolean" }
+        "expect_reachable": { "type": "boolean" },
+        "negative_evidence": { "enum": ["dns_nxdomain", "connection_refused"] }
       },
+      "allOf": [{ "if": { "required": ["negative_evidence"] }, "then": { "required": ["expect_reachable"], "properties": { "expect_reachable": { "const": false } } } }],
       "additionalProperties": false
     },
     "azureTarget": {

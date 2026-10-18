@@ -12,6 +12,7 @@ import (
 
 	"github.com/LOhZee/trustfall/internal/engine"
 	"github.com/LOhZee/trustfall/internal/evidence"
+	"github.com/LOhZee/trustfall/internal/probes/userns"
 )
 
 type Probe struct {
@@ -22,7 +23,7 @@ type Probe struct {
 }
 
 func (Probe) Metadata() engine.Metadata {
-	return engine.Metadata{Name: "container-isolation", Version: "1", Module: "isolation", Requirements: []string{"Linux procfs"}}
+	return engine.Metadata{Name: "container-isolation", Version: "2", Module: "isolation", Requirements: []string{"Linux procfs"}}
 }
 
 var capNames = []string{"CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_DAC_READ_SEARCH", "CAP_FOWNER", "CAP_FSETID", "CAP_KILL", "CAP_SETGID", "CAP_SETUID", "CAP_SETPCAP", "CAP_LINUX_IMMUTABLE", "CAP_NET_BIND_SERVICE", "CAP_NET_BROADCAST", "CAP_NET_ADMIN", "CAP_NET_RAW", "CAP_IPC_LOCK", "CAP_IPC_OWNER", "CAP_SYS_MODULE", "CAP_SYS_RAWIO", "CAP_SYS_CHROOT", "CAP_SYS_PTRACE", "CAP_SYS_PACCT", "CAP_SYS_ADMIN", "CAP_SYS_BOOT", "CAP_SYS_NICE", "CAP_SYS_RESOURCE", "CAP_SYS_TIME", "CAP_SYS_TTY_CONFIG", "CAP_MKNOD", "CAP_LEASE", "CAP_AUDIT_WRITE", "CAP_AUDIT_CONTROL", "CAP_SETFCAP", "CAP_MAC_OVERRIDE", "CAP_MAC_ADMIN", "CAP_SYSLOG", "CAP_WAKE_ALARM", "CAP_BLOCK_SUSPEND", "CAP_AUDIT_READ", "CAP_PERFMON", "CAP_BPF", "CAP_CHECKPOINT_RESTORE"}
@@ -101,26 +102,34 @@ func (p Probe) Run(_ context.Context, _ engine.Config) ([]evidence.Finding, erro
 	out = append(out, lf)
 
 	uf := evidence.NewFinding("TF-ISO-004", "User namespace mappings", "isolation", evidence.SeverityNote, evidence.Observed, evidence.StatusInfo, "user namespace ID maps were inspected")
-	uf.Implications = "Identity mapping helps describe namespace isolation but does not prove containment."
+	uf.Implications = "Identity mapping describes the relationship to the immediately enclosing user namespace. It does not establish that namespace as the host's initial user namespace or prove containment."
 	uf.Remediation = "Prefer rootless/user-namespaced containers where supported and validate the effective mapping."
-	uf.Evidence = map[string]any{}
-	mapsAvailable := true
-	for _, n := range []string{"uid_map", "gid_map"} {
-		if b, err := os.ReadFile(root + "/self/" + n); err == nil {
-			uf.Evidence[n] = strings.TrimSpace(string(b))
-		} else {
-			mapsAvailable = false
-			uf.Evidence[n+"_available"] = false
-		}
+	uidMap := userns.Inspect(root+"/self/uid_map", nil)
+	gidMap := userns.Inspect(root+"/self/gid_map", nil)
+	uf.Evidence = map[string]any{
+		"uid_map_available":                  uidMap.Available,
+		"uid_map_valid":                      uidMap.Valid,
+		"uid_map_entry_count":                uidMap.EntryCount,
+		"uid_zero_mapped":                    uidMap.IDZeroMapped,
+		"uid_zero_maps_to_parent_uid_zero":   uidMap.IDZeroMapsToParentZero,
+		"uid_map_identity_mapping":           uidMap.IdentityMapping,
+		"uid_map_error":                      uidMap.ErrorKind,
+		"gid_map_available":                  gidMap.Available,
+		"gid_map_valid":                      gidMap.Valid,
+		"gid_map_entry_count":                gidMap.EntryCount,
+		"gid_zero_mapped":                    gidMap.IDZeroMapped,
+		"gid_zero_maps_to_parent_gid_zero":   gidMap.IDZeroMapsToParentZero,
+		"gid_map_identity_mapping":           gidMap.IdentityMapping,
+		"gid_map_error":                      gidMap.ErrorKind,
+		"initial_user_namespace_established": false,
 	}
-	if uidMap, ok := uf.Evidence["uid_map"].(string); ok {
-		if mapsToHostZero, valid := uidZeroMapsToHostZero(uidMap); valid {
-			uf.Evidence["uid_zero_maps_to_host_uid_zero"] = mapsToHostZero
-		} else {
-			mapsAvailable = false
-		}
+	if uidMap.Available {
+		uf.Evidence["uid_map"] = uidMap.Raw
 	}
-	if !mapsAvailable {
+	if gidMap.Available {
+		uf.Evidence["gid_map"] = gidMap.Raw
+	}
+	if !uidMap.Valid || !gidMap.Valid {
 		uf.Classification, uf.Status = evidence.Unknown, evidence.StatusUnknown
 		uf.Observed = "one or more user namespace ID mappings were unavailable or malformed"
 	}
@@ -176,16 +185,15 @@ func (p Probe) Run(_ context.Context, _ engine.Config) ([]evidence.Finding, erro
 			hasSysAdmin = true
 		}
 	}
-	uidZeroHostZero, uidMapValid := uidZeroMapsToHostZero(stringOrEmpty(uf.Evidence["uid_map"]))
 	pf := evidence.NewFinding("TF-ISO-008", "Privileged execution indicators", "isolation", evidence.SeverityHigh, evidence.Observed, evidence.StatusPass, "no strong privileged-container indicator was observed")
-	pf.Implications = "Root identity or CAP_SYS_ADMIN increases attack surface, but neither alone verifies a container escape or host access. UID 0 in a remapped user namespace is not equivalent to host UID 0."
+	pf.Implications = "Root identity or CAP_SYS_ADMIN increases attack surface, but neither alone verifies a container escape or host access. A remap relative to the parent user namespace does not identify the host's initial namespace."
 	pf.Remediation = "Use a non-root image user, drop all capabilities and set no-new-privileges."
-	pf.Evidence = map[string]any{"effective_uid_root": euidRoot, "cap_sys_admin": hasSysAdmin, "no_new_privileges": status["NoNewPrivs"] == "1", "uid_map_available": uidMapValid, "uid_zero_maps_to_host_uid_zero": uidZeroHostZero}
+	pf.Evidence = map[string]any{"effective_uid_root": euidRoot, "cap_sys_admin": hasSysAdmin, "no_new_privileges": status["NoNewPrivs"] == "1", "uid_map_available": uidMap.Available, "uid_map_valid": uidMap.Valid, "uid_zero_mapped": uidMap.IDZeroMapped, "uid_zero_maps_to_parent_uid_zero": uidMap.IDZeroMapsToParentZero, "initial_user_namespace_established": false}
 	if euidRoot || hasSysAdmin {
 		pf.Status, pf.Observed = evidence.StatusFail, "one or more privileged execution indicators were observed"
-		if euidRoot && uidMapValid && !uidZeroHostZero && !hasSysAdmin {
+		if euidRoot && uidMap.Valid && uidMap.IDZeroMapped && !uidMap.IDZeroMapsToParentZero && !hasSysAdmin {
 			pf.Severity = evidence.SeverityMedium
-			pf.Observed = "uid 0 was observed inside a remapped user namespace; host-root authority was not established"
+			pf.Observed = "uid 0 was remapped relative to the observed parent user namespace; initial-namespace root authority was not established"
 		}
 	}
 	out = append(out, pf)
@@ -287,25 +295,6 @@ func decodeCaps(raw string) ([]string, error) {
 		}
 	}
 	return out, nil
-}
-
-func uidZeroMapsToHostZero(raw string) (bool, bool) {
-	fields := strings.Fields(raw)
-	if len(fields) < 3 {
-		return false, false
-	}
-	containerID, err1 := strconv.ParseUint(fields[0], 10, 64)
-	hostID, err2 := strconv.ParseUint(fields[1], 10, 64)
-	length, err3 := strconv.ParseUint(fields[2], 10, 64)
-	if err1 != nil || err2 != nil || err3 != nil || length == 0 {
-		return false, false
-	}
-	return containerID == 0 && hostID == 0, true
-}
-
-func stringOrEmpty(v any) string {
-	s, _ := v.(string)
-	return s
 }
 
 func inspectMounts(path string) (evidence.Finding, error) {

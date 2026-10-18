@@ -56,6 +56,30 @@ cloud:
 	}
 }
 
+func TestNetworkNegativeEvidenceValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		target  string
+		wantErr bool
+	}{
+		{"explicit refused", "type: tcp\n      address: example.com:443\n      expect_reachable: false\n      negative_evidence: connection_refused", false},
+		{"explicit nxdomain", "type: dns\n      address: missing.example\n      expect_reachable: false\n      negative_evidence: dns_nxdomain", false},
+		{"missing expectation", "type: tcp\n      address: example.com:443\n      negative_evidence: connection_refused", true},
+		{"positive expectation", "type: tcp\n      address: example.com:443\n      expect_reachable: true\n      negative_evidence: connection_refused", true},
+		{"refused DNS", "type: dns\n      address: missing.example\n      expect_reachable: false\n      negative_evidence: connection_refused", true},
+		{"ambiguous timeout", "type: tcp\n      address: example.com:443\n      expect_reachable: false\n      negative_evidence: timeout", true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			input := "version: '1'\nmode: audit\nnetwork:\n  targets:\n    - name: target\n      " + test.target + "\n"
+			_, err := Decode(strings.NewReader(input))
+			if (err != nil) != test.wantErr {
+				t.Fatalf("Decode() error = %v, wantErr %t", err, test.wantErr)
+			}
+		})
+	}
+}
+
 func TestAuditAndEnforceEvaluation(t *testing.T) {
 	p, _ := Builtin("baseline")
 	r := evidence.Report{SchemaVersion: evidence.SchemaVersion, Findings: []evidence.Finding{{RuleID: "TF-X", Module: "x", Title: "x", Severity: evidence.SeverityHigh, Status: evidence.StatusFail}}}

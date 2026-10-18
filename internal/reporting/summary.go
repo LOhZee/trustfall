@@ -10,6 +10,9 @@ import (
 )
 
 func WriteSummary(w io.Writer, r evidence.Report, violations []string) error {
+	if err := r.Normalize(); err != nil {
+		return err
+	}
 	counts := map[evidence.Status]int{}
 	for _, f := range r.Findings {
 		counts[f.Status]++

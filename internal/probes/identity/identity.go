@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -16,12 +18,19 @@ import (
 
 	"github.com/LOhZee/trustfall/internal/engine"
 	"github.com/LOhZee/trustfall/internal/evidence"
+	"github.com/LOhZee/trustfall/internal/probes/userns"
 )
 
 type Probe struct{ Client *http.Client }
 
+var errOIDCRedirect = errors.New("OIDC redirect refused")
+
+type oidcOperationError struct{ outcome string }
+
+func (e oidcOperationError) Error() string { return "OIDC operation failed: " + e.outcome }
+
 func (Probe) Metadata() engine.Metadata {
-	return engine.Metadata{Name: "runtime-identity", Version: "1", Module: "identity", Requirements: []string{"process environment", "user database"}}
+	return engine.Metadata{Name: "runtime-identity", Version: "2", Module: "identity", Requirements: []string{"process environment", "user database"}}
 }
 
 func (p Probe) Run(ctx context.Context, cfg engine.Config) ([]evidence.Finding, error) {
@@ -31,15 +40,28 @@ func (p Probe) Run(ctx context.Context, cfg engine.Config) ([]evidence.Finding, 
 	if err == nil {
 		username = usr.Username
 	}
-	uidMap := inspectUIDMap("/proc/self/uid_map")
+	uidMap := userns.Inspect("/proc/self/uid_map", nil)
 	observedIdentity := fmt.Sprintf("process runs as uid=%d gid=%d", uid, gid)
-	if uid == 0 && uidMap.Available && !uidMap.UIDZeroMapsToHostZero {
-		observedIdentity += " with uid 0 remapped by a user namespace"
+	if uid == 0 && uidMap.Valid && uidMap.IDZeroMapped && !uidMap.IDZeroMapsToParentZero {
+		observedIdentity += " with uid 0 remapped relative to the observed parent user namespace"
 	}
 	f := evidence.NewFinding("TF-ID-001", "Effective process identity", "identity", evidence.SeverityNote, evidence.Observed, evidence.StatusPass, observedIdentity)
-	f.Implications = "The process identity determines direct access inside the job container. UID 0 in a remapped user namespace is not equivalent to host UID 0, and neither condition alone proves host access."
+	f.Implications = "The process identity determines direct access inside the job container. The observed map describes only the immediately enclosing user namespace; it does not identify the host's initial user namespace or prove host access."
 	f.Remediation = "Use a non-root image user where the workload does not require root."
-	f.Evidence = map[string]any{"uid": uid, "gid": gid, "username": username, "uid_zero": uid == 0, "uid_map_available": uidMap.Available, "uid_zero_maps_to_host_uid_zero": uidMap.UIDZeroMapsToHostZero}
+	f.Evidence = map[string]any{
+		"uid":                                uid,
+		"gid":                                gid,
+		"username":                           username,
+		"uid_zero":                           uid == 0,
+		"uid_map_available":                  uidMap.Available,
+		"uid_map_valid":                      uidMap.Valid,
+		"uid_map_entry_count":                uidMap.EntryCount,
+		"uid_zero_mapped":                    uidMap.IDZeroMapped,
+		"uid_zero_maps_to_parent_uid_zero":   uidMap.IDZeroMapsToParentZero,
+		"uid_map_identity_mapping":           uidMap.IdentityMapping,
+		"uid_map_error":                      uidMap.ErrorKind,
+		"initial_user_namespace_established": false,
+	}
 	if uid == 0 {
 		f.Severity, f.Status = evidence.SeverityMedium, evidence.StatusFail
 	}
@@ -86,7 +108,9 @@ func (p Probe) Run(ctx context.Context, cfg engine.Config) ([]evidence.Finding, 
 	audience := optionString(cfg.Options, "oidc_audience", "trustfall")
 	claims, validationErrors, err := p.requestClaims(ctx, audience)
 	if err != nil {
-		result = append(result, oidcUnknown("OIDC claim retrieval failed: "+evidence.SafeError(err)))
+		finding := oidcUnknown("OIDC claim retrieval did not complete")
+		finding.Evidence = map[string]any{"outcome": oidcOutcome(err), "raw_token_recorded": false}
+		result = append(result, finding)
 		return result, nil
 	}
 	cf := evidence.NewFinding("TF-ID-004", "OIDC identity claims", "identity", evidence.SeverityLow, evidence.Verified, evidence.StatusPass, "GitHub OIDC token issuance succeeded and selected claims passed local semantic validation")
@@ -115,6 +139,7 @@ func oidcUnknown(msg string) evidence.Finding {
 	f := evidence.NewFinding("TF-ID-004", "OIDC identity claims", "identity", evidence.SeverityNote, evidence.Unknown, evidence.StatusUnknown, msg)
 	f.Implications = "No conclusion can be drawn about token issuance or downstream federation."
 	f.Remediation = "Grant id-token: write only for an authorised test, or leave this result unknown."
+	f.Evidence = map[string]any{"token_requested": true, "token_issued": false, "raw_token_recorded": false}
 	return f
 }
 
@@ -128,46 +153,51 @@ func optionString(m map[string]any, key, fallback string) string {
 func (p Probe) requestClaims(ctx context.Context, audience string) (map[string]any, []string, error) {
 	endpoint, err := url.Parse(os.Getenv("ACTIONS_ID_TOKEN_REQUEST_URL"))
 	if err != nil || endpoint.Scheme != "https" || endpoint.User != nil || !isGitHubOIDCHost(endpoint.Hostname()) {
-		return nil, nil, fmt.Errorf("invalid or untrusted OIDC endpoint")
+		return nil, nil, oidcOperationError{outcome: "invalid_endpoint"}
 	}
 	q := endpoint.Query()
 	q.Set("audience", audience)
 	endpoint.RawQuery = q.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, oidcOperationError{outcome: "request_creation_failed"}
 	}
 	req.Header.Set("Authorization", "Bearer "+os.Getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN"))
 	client := p.Client
 	if client == nil {
-		client = &http.Client{Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return fmt.Errorf("OIDC redirect refused") }}
+		client = oidcHTTPClient()
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, oidcOperationError{outcome: oidcTransportOutcome(err)}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		io.CopyN(io.Discard, resp.Body, 4096)
-		return nil, nil, fmt.Errorf("OIDC endpoint returned HTTP %d", resp.StatusCode)
+		return nil, nil, oidcOperationError{outcome: "issuance_rejected"}
 	}
 	var payload struct {
 		Value string `json:"value"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
-		return nil, nil, fmt.Errorf("decode OIDC response: %w", err)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
+	if err != nil || len(body) > 1<<20 {
+		return nil, nil, oidcOperationError{outcome: "malformed_response"}
+	}
+	defer zeroBytes(body)
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, nil, oidcOperationError{outcome: "malformed_response"}
 	}
 	parts := strings.Split(payload.Value, ".")
 	if len(parts) != 3 {
-		return nil, nil, fmt.Errorf("OIDC response was not a JWT")
+		return nil, nil, oidcOperationError{outcome: "malformed_token"}
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
-		return nil, nil, fmt.Errorf("decode JWT claims")
+		return nil, nil, oidcOperationError{outcome: "malformed_token"}
 	}
+	defer zeroBytes(raw)
 	var all map[string]any
 	if err := json.Unmarshal(raw, &all); err != nil {
-		return nil, nil, fmt.Errorf("parse JWT claims")
+		return nil, nil, oidcOperationError{outcome: "malformed_token"}
 	}
 	selected := map[string]any{}
 	for _, k := range []string{"iss", "aud", "sub", "repository", "repository_id", "repository_owner", "repository_visibility", "ref", "ref_type", "environment", "workflow", "job_workflow_ref", "runner_environment", "actor", "event_name", "iat", "nbf", "exp"} {
@@ -183,7 +213,8 @@ func (p Probe) requestClaims(ctx context.Context, audience string) (map[string]a
 	}
 	selected["signature_verified"] = false
 	selected["requested_audience"] = audience
-	selected["claim_handling"] = "decoded locally; raw token discarded"
+	selected["claim_handling"] = "decoded locally; raw token excluded from evidence and references released after parsing"
+	selected["memory_erasure_guaranteed"] = false
 	validationErrors := validateClaims(all, audience, time.Now())
 	selected["issuer_valid"] = !contains(validationErrors, "issuer is not GitHub Actions")
 	selected["audience_valid"] = !contains(validationErrors, "audience does not contain the requested value")
@@ -193,27 +224,40 @@ func (p Probe) requestClaims(ctx context.Context, audience string) (map[string]a
 	return selected, validationErrors, nil
 }
 
-type uidMapEvidence struct {
-	Available             bool
-	UIDZeroMapsToHostZero bool
+func oidcHTTPClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	return &http.Client{Transport: transport, Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errOIDCRedirect }}
 }
 
-func inspectUIDMap(path string) uidMapEvidence {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return uidMapEvidence{}
+func oidcOutcome(err error) string {
+	var operation oidcOperationError
+	if errors.As(err, &operation) {
+		return operation.outcome
 	}
-	fields := strings.Fields(string(b))
-	if len(fields) < 3 {
-		return uidMapEvidence{}
+	return oidcTransportOutcome(err)
+}
+
+func oidcTransportOutcome(err error) string {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "cancelled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.Is(err, errOIDCRedirect):
+		return "redirect_refused"
 	}
-	containerID, err1 := strconv.ParseUint(fields[0], 10, 64)
-	hostID, err2 := strconv.ParseUint(fields[1], 10, 64)
-	length, err3 := strconv.ParseUint(fields[2], 10, 64)
-	if err1 != nil || err2 != nil || err3 != nil || length == 0 {
-		return uidMapEvidence{}
+	var networkError net.Error
+	if errors.As(err, &networkError) && networkError.Timeout() {
+		return "timeout"
 	}
-	return uidMapEvidence{Available: true, UIDZeroMapsToHostZero: containerID == 0 && hostID == 0}
+	return "transport_error"
+}
+
+func zeroBytes(value []byte) {
+	for i := range value {
+		value[i] = 0
+	}
 }
 
 func isGitHubOIDCHost(host string) bool {

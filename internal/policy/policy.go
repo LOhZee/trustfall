@@ -40,10 +40,11 @@ type Network struct {
 	Concurrency int             `yaml:"concurrency" json:"concurrency"`
 }
 type NetworkTarget struct {
-	Name            string `yaml:"name" json:"name"`
-	Type            string `yaml:"type" json:"type"`
-	Address         string `yaml:"address" json:"address"`
-	ExpectReachable *bool  `yaml:"expect_reachable" json:"expect_reachable,omitempty"`
+	Name             string `yaml:"name" json:"name"`
+	Type             string `yaml:"type" json:"type"`
+	Address          string `yaml:"address" json:"address"`
+	ExpectReachable  *bool  `yaml:"expect_reachable" json:"expect_reachable,omitempty"`
+	NegativeEvidence string `yaml:"negative_evidence" json:"negative_evidence,omitempty"`
 }
 type Metadata struct {
 	Enabled   bool     `yaml:"enabled" json:"enabled"`
@@ -418,6 +419,20 @@ func validateNetworkTarget(t NetworkTarget) error {
 		}
 	default:
 		return fmt.Errorf("type must be dns, tcp, or https")
+	}
+	if t.NegativeEvidence != "" {
+		if t.ExpectReachable == nil || *t.ExpectReachable {
+			return fmt.Errorf("negative_evidence requires expect_reachable: false")
+		}
+		switch t.NegativeEvidence {
+		case "dns_nxdomain":
+		case "connection_refused":
+			if t.Type == "dns" {
+				return fmt.Errorf("connection_refused is not valid for a DNS probe")
+			}
+		default:
+			return fmt.Errorf("negative_evidence must be dns_nxdomain or connection_refused")
+		}
 	}
 	return nil
 }

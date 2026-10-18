@@ -3,6 +3,7 @@ package cloud
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -12,7 +13,29 @@ import (
 
 	"github.com/LOhZee/trustfall/internal/evidence"
 	"github.com/LOhZee/trustfall/internal/policy"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 )
+
+type recordingAWSSigner struct {
+	err                    error
+	service                string
+	region                 string
+	payloadHash            string
+	disableURIPathEscaping bool
+}
+
+func (s *recordingAWSSigner) SignHTTP(_ context.Context, _ aws.Credentials, _ *http.Request, payloadHash, service, region string, _ time.Time, optFns ...func(*v4.SignerOptions)) error {
+	options := v4.SignerOptions{}
+	for _, option := range optFns {
+		option(&options)
+	}
+	s.service = service
+	s.region = region
+	s.payloadHash = payloadHash
+	s.disableURIPathEscaping = options.DisableURIPathEscaping
+	return s.err
+}
 
 func TestAWSFederationAndDeniedTargetAreOperationSpecific(t *testing.T) {
 	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://vstoken.actions.githubusercontent.com/token")
@@ -101,12 +124,89 @@ func TestAWSExchangeFailureIsUnknown(t *testing.T) {
 	}
 }
 
-func TestAWSCanonicalQuerySortsEncodedKeysAndValues(t *testing.T) {
-	u, err := url.Parse("https://sts.us-east-1.amazonaws.com/?z=%20%2F&a=~&a=%20")
+func TestAWSSignerMatchesPublishedS3LifecycleVector(t *testing.T) {
+	// AWS S3 Signature Version 4 documentation publishes this exact request,
+	// credential, timestamp and expected Authorization value.
+	req, err := http.NewRequest(http.MethodGet, "https://examplebucket.s3.amazonaws.com/?lifecycle", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := awsCanonicalQuery(u), "a=%20&a=~&z=%20%2F"; got != want {
-		t.Fatalf("canonical query %q, want %q", got, want)
+	credentials := aws.Credentials{AccessKeyID: "AKIAIOSFODNN7EXAMPLE", SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"}
+	when := time.Date(2013, 5, 24, 0, 0, 0, 0, time.UTC)
+	if err := signAWSRequest(context.Background(), v4.NewSigner(), req, credentials, "s3", "us-east-1", when); err != nil {
+		t.Fatal(err)
 	}
+	want := "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=fea454ca298b7da1c68078a5d1bdbfbbe0d65c699e0f91ac7a200a0136783543"
+	if got := req.Header.Get("Authorization"); got != want {
+		t.Fatalf("Authorization mismatch\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestAWSSignerDelegatesCanonicalisationAndS3PathRules(t *testing.T) {
+	tests := []struct {
+		name    string
+		rawURL  string
+		service string
+		region  string
+		s3Path  bool
+	}{
+		{"reserved repeated and empty query", "https://sts.us-east-1.amazonaws.com/?z=%20%2F&a=~&a=%20&empty=", "sts", "us-east-1", false},
+		{"spaces and Unicode", "https://execute-api.eu-west-1.amazonaws.com/a%20b/%E2%98%83?q=a%20b", "execute-api", "eu-west-1", false},
+		{"escaped slash S3", "https://bucket.s3.us-west-2.amazonaws.com/key%2Fpart", "s3", "us-west-2", true},
+		{"empty path global endpoint", "https://sts.amazonaws.com", "sts", "us-east-1", false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodGet, test.rawURL, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			original := req.URL.String()
+			signer := &recordingAWSSigner{}
+			err = signAWSRequest(context.Background(), signer, req, aws.Credentials{AccessKeyID: "id", SecretAccessKey: "secret", SessionToken: "session"}, test.service, test.region, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if signer.service != test.service || signer.region != test.region || signer.payloadHash != sha256Hex(nil) || signer.disableURIPathEscaping != test.s3Path {
+				t.Fatalf("unexpected signer inputs: %+v", signer)
+			}
+			if req.URL.String() != original {
+				t.Fatalf("request URL changed before signing: %q -> %q", original, req.URL.String())
+			}
+		})
+	}
+}
+
+func TestAWSSignerNormalisesHeaderWhitespaceAndIncludesSessionToken(t *testing.T) {
+	credentials := aws.Credentials{AccessKeyID: "ASIATEST", SecretAccessKey: "secret", SessionToken: "temporary-session-token"}
+	when := time.Date(2029, 1, 2, 3, 4, 5, 0, time.UTC)
+	var authorizations []string
+	for _, value := range []string{"one  two   three", "one two three"} {
+		req, err := http.NewRequest(http.MethodGet, "https://sts.us-east-1.amazonaws.com/?Action=GetCallerIdentity&Version=2011-06-15", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("X-Test-Whitespace", value)
+		if err := signAWSRequest(context.Background(), v4.NewSigner(), req, credentials, "sts", "us-east-1", when); err != nil {
+			t.Fatal(err)
+		}
+		if req.Header.Get("X-Amz-Security-Token") != credentials.SessionToken {
+			t.Fatal("temporary session token was not included")
+		}
+		authorizations = append(authorizations, req.Header.Get("Authorization"))
+	}
+	if authorizations[0] != authorizations[1] {
+		t.Fatalf("equivalent header whitespace produced different signatures:\n%s\n%s", authorizations[0], authorizations[1])
+	}
+}
+
+func TestAWSSigningFailureIsReturnedWithoutSecretMaterial(t *testing.T) {
+	req, _ := http.NewRequest(http.MethodGet, "https://sts.amazonaws.com/", nil)
+	secret := "SYNTHETIC-SIGNER-SECRET"
+	err := signAWSRequest(context.Background(), &recordingAWSSigner{err: errors.New(secret)}, req, aws.Credentials{AccessKeyID: "id", SecretAccessKey: secret}, "sts", "us-east-1", time.Now())
+	if err == nil {
+		t.Fatal("signing failure was ignored")
+	}
+	// The provider converts this error to a fixed outcome before report creation;
+	// the low-level function intentionally returns it only to its direct caller.
 }

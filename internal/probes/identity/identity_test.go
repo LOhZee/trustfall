@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -91,8 +92,47 @@ func TestOIDCEndpointHostIsConstrained(t *testing.T) {
 		t.Fatal(err)
 	}
 	last := findings[len(findings)-1]
-	if last.Classification != evidence.Unknown || !strings.Contains(last.Observed, "untrusted OIDC endpoint") {
+	if last.Classification != evidence.Unknown || last.Evidence["outcome"] != "invalid_endpoint" {
 		t.Fatalf("unexpected result: %+v", last)
+	}
+}
+
+func TestOIDCTransportErrorsCannotInjectSecretsIntoFinding(t *testing.T) {
+	const secret = "SYNTHETIC-OIDC-TRANSPORT-SECRET"
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://vstoken.actions.githubusercontent.com/token")
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "request-secret")
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New(secret)
+	})}
+	findings, err := (Probe{Client: client}).Run(context.Background(), engine.Config{Options: map[string]any{"request_oidc": true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(findings)
+	last := findings[len(findings)-1]
+	if strings.Contains(string(encoded), secret) || last.Evidence["outcome"] != "transport_error" {
+		t.Fatalf("transport error leaked or was misclassified: %s", encoded)
+	}
+}
+
+func TestOIDCDefaultClientDisablesProxyAndRedirects(t *testing.T) {
+	client := oidcHTTPClient()
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok || transport.Proxy != nil {
+		t.Fatalf("OIDC client can use environment proxy: %#v", client.Transport)
+	}
+	client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusFound, Header: http.Header{"Location": []string{"https://attacker.example/token"}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+	})
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://vstoken.actions.githubusercontent.com/token")
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "request-secret")
+	findings, err := (Probe{Client: client}).Run(context.Background(), engine.Config{Options: map[string]any{"request_oidc": true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := findings[len(findings)-1]
+	if last.Evidence["outcome"] != "redirect_refused" || last.Status != evidence.StatusUnknown {
+		t.Fatalf("redirect was not refused: %+v", last)
 	}
 }
 

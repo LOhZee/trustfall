@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -163,5 +165,29 @@ func TestOIDCAndTimeoutArgumentsFailClosed(t *testing.T) {
 		if code := run(args, &out, &errOut); code != exitUsage {
 			t.Fatalf("args %v returned %d, stderr=%s", args, code, errOut.String())
 		}
+	}
+}
+
+func TestFailedReportRenderingClearsStaleSensitiveContent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "report.json")
+	const staleSecret = "SYNTHETIC-STALE-REPORT-SECRET"
+	if err := os.WriteFile(path, []byte(staleSecret), 0o666); err != nil {
+		t.Fatal(err)
+	}
+	wantErr := errors.New("render failed")
+	err := withOutput(path, false, io.Discard, func(io.Writer) error { return wantErr })
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("withOutput() error = %v", err)
+	}
+	raw, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	info, statErr := os.Stat(path)
+	if statErr != nil {
+		t.Fatal(statErr)
+	}
+	if len(raw) != 0 || info.Mode().Perm() != 0o600 {
+		t.Fatalf("stale report survived failure: contents=%q mode=%o", raw, info.Mode().Perm())
 	}
 }

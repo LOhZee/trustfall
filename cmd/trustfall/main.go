@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
@@ -269,13 +270,26 @@ func withOutput(path string, appendMode bool, stdout io.Writer, fn func(io.Write
 	if path == "-" {
 		return fn(stdout)
 	}
-	flags := os.O_CREATE | os.O_WRONLY
 	if appendMode {
-		flags |= os.O_APPEND
-	} else {
-		flags |= os.O_TRUNC
+		f, e := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if e != nil {
+			return e
+		}
+		if e = f.Chmod(0o600); e != nil {
+			f.Close()
+			return e
+		}
+		if e = fn(f); e != nil {
+			f.Close()
+			return e
+		}
+		return f.Close()
 	}
-	f, e := os.OpenFile(path, flags, 0o600)
+
+	// Clear a pre-existing report before rendering so stale contents cannot
+	// survive a renderer failure. Rendering then happens in memory and only a
+	// complete, already-redacted document is written to the private file.
+	f, e := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if e != nil {
 		return e
 	}
@@ -283,7 +297,18 @@ func withOutput(path string, appendMode bool, stdout io.Writer, fn func(io.Write
 		f.Close()
 		return e
 	}
-	if e = fn(f); e != nil {
+	if e = f.Close(); e != nil {
+		return e
+	}
+	var rendered bytes.Buffer
+	if e = fn(&rendered); e != nil {
+		return e
+	}
+	f, e = os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0o600)
+	if e != nil {
+		return e
+	}
+	if _, e = f.Write(rendered.Bytes()); e != nil {
 		f.Close()
 		return e
 	}

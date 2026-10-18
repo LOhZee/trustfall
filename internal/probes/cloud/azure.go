@@ -10,7 +10,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/LOhZee/trustfall/internal/evidence"
 	"github.com/LOhZee/trustfall/internal/policy"
@@ -27,7 +26,7 @@ func (a Azure) Enabled() bool { return a.Config.Enabled }
 func (a Azure) Assess(ctx context.Context) ([]evidence.Finding, error) {
 	client := a.Client
 	if client == nil {
-		client = &http.Client{Timeout: 8 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error { return fmt.Errorf("redirect refused") }}
+		client = cloudHTTPClient()
 	}
 	tenant, clientID := os.Getenv("AZURE_TENANT_ID"), os.Getenv("AZURE_CLIENT_ID")
 	if !uuidLike(tenant) || !uuidLike(clientID) {
@@ -35,16 +34,16 @@ func (a Azure) Assess(ctx context.Context) ([]evidence.Finding, error) {
 	}
 	assertion, err := githubOIDC(ctx, client, a.Config.Audience)
 	if err != nil {
-		return []evidence.Finding{azureUnknown("GitHub OIDC token issuance failed: " + evidence.SafeError(err))}, nil
-	}
-	access, oauthCode, errorCodes, err := exchange(ctx, client, tenant, clientID, a.Config.Scope, assertion)
-	assertion = ""
-	if err != nil {
-		f := azureUnknown("Azure workload identity exchange failed")
-		f.Evidence = map[string]any{"provider": "azure", "oauth_error": oauthCode, "oauth_error_codes": errorCodes}
+		f := azureUnknown("GitHub OIDC token issuance did not complete")
+		f.Evidence = map[string]any{"provider": "azure", "outcome": cloudTransportOutcome(err), "raw_tokens_recorded": false}
 		return []evidence.Finding{f}, nil
 	}
-	defer func() { access = "" }()
+	access, oauthCode, errorCodes, err := exchange(ctx, client, tenant, clientID, a.Config.Scope, assertion)
+	if err != nil {
+		f := azureUnknown("Azure workload identity exchange failed")
+		f.Evidence = map[string]any{"provider": "azure", "oauth_error": sanitizeProviderCode(oauthCode), "oauth_error_codes": errorCodes, "outcome": cloudTransportOutcome(err), "raw_tokens_recorded": false}
+		return []evidence.Finding{f}, nil
+	}
 	fed := evidence.NewFinding("TF-CLOUD-AZ-001", "Azure workload identity federation", "cloud", evidence.SeverityLow, evidence.Verified, evidence.StatusInfo, "GitHub OIDC assertion was exchanged for an Azure access token")
 	fed.Implications = "This verifies federation for this identity and scope at this time, not access to a resource or all permissions."
 	fed.Remediation = "Constrain the federated credential subject and audience and keep Azure role assignments narrowly scoped."
@@ -63,12 +62,12 @@ func (a Azure) Assess(ctx context.Context) ([]evidence.Finding, error) {
 		req.Header.Set("Accept", "application/json")
 		resp, e := client.Do(req)
 		if e != nil {
-			out = append(out, azureTargetUnknown(target, e))
+			out = append(out, azureTargetUnknown(target, cloudTransportOutcome(e)))
 			continue
 		}
 		bodyEvidence := summarizeAzureBody(resp, target)
 		resp.Body.Close()
-		code := resp.Header.Get("x-ms-error-code")
+		code := sanitizeProviderCode(resp.Header.Get("x-ms-error-code"))
 		outcome := "responded"
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			outcome = "allowed"
@@ -98,34 +97,33 @@ func (a Azure) Assess(ctx context.Context) ([]evidence.Finding, error) {
 func githubOIDC(ctx context.Context, client *http.Client, audience string) (string, error) {
 	rawURL, bearer := os.Getenv("ACTIONS_ID_TOKEN_REQUEST_URL"), os.Getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
 	if rawURL == "" || bearer == "" {
-		return "", fmt.Errorf("OIDC request facilities unavailable")
+		return "", cloudError("oidc_facilities_unavailable")
 	}
 	u, e := url.Parse(rawURL)
 	if e != nil || u.Scheme != "https" || u.User != nil || !isGitHubOIDCHost(u.Hostname()) {
-		return "", fmt.Errorf("invalid or untrusted OIDC request URL")
+		return "", cloudError("invalid_oidc_endpoint")
 	}
 	q := u.Query()
 	q.Set("audience", audience)
 	u.RawQuery = q.Encode()
 	req, e := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if e != nil {
-		return "", e
+		return "", cloudError("request_creation_failed")
 	}
 	req.Header.Set("Authorization", "Bearer "+bearer)
 	resp, e := client.Do(req)
 	if e != nil {
-		return "", e
+		return "", fmt.Errorf("OIDC transport: %w", classifyCloudError(e))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		io.CopyN(io.Discard, resp.Body, 4096)
-		return "", fmt.Errorf("OIDC endpoint returned HTTP %d", resp.StatusCode)
+		return "", cloudError("oidc_issuance_rejected")
 	}
 	var body struct {
 		Value string `json:"value"`
 	}
-	if e = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&body); e != nil || strings.Count(body.Value, ".") != 2 {
-		return "", fmt.Errorf("invalid OIDC response")
+	if e = decodeBoundedJSON(resp.Body, 1<<20, &body); e != nil || strings.Count(body.Value, ".") != 2 {
+		return "", cloudError("malformed_oidc_response")
 	}
 	return body.Value, nil
 }
@@ -139,12 +137,12 @@ func exchange(ctx context.Context, client *http.Client, tenant, clientID, scope,
 	form := url.Values{"client_id": {clientID}, "scope": {scope}, "grant_type": {"client_credentials"}, "client_assertion_type": {"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"}, "client_assertion": {assertion}}
 	req, e := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
 	if e != nil {
-		return "", "", nil, e
+		return "", "", nil, cloudError("request_creation_failed")
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, e := client.Do(req)
 	if e != nil {
-		return "", "", nil, e
+		return "", "", nil, fmt.Errorf("Azure exchange transport: %w", classifyCloudError(e))
 	}
 	defer resp.Body.Close()
 	var body struct {
@@ -152,11 +150,15 @@ func exchange(ctx context.Context, client *http.Client, tenant, clientID, scope,
 		Error       string `json:"error"`
 		ErrorCodes  []int  `json:"error_codes"`
 	}
-	if e = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&body); e != nil {
-		return "", "", nil, fmt.Errorf("decode Azure token response")
+	if e = decodeBoundedJSON(resp.Body, 1<<20, &body); e != nil {
+		return "", "", nil, cloudError("malformed_token_response")
 	}
 	if resp.StatusCode != 200 || body.AccessToken == "" {
-		return "", body.Error, body.ErrorCodes, fmt.Errorf("Azure token endpoint returned HTTP %d", resp.StatusCode)
+		outcome := "credential_exchange_rejected"
+		if resp.StatusCode == http.StatusTooManyRequests {
+			outcome = "rate_limited"
+		}
+		return "", body.Error, body.ErrorCodes, cloudError(outcome)
 	}
 	return body.AccessToken, "", nil, nil
 }
@@ -166,11 +168,11 @@ func azureUnknown(msg string) evidence.Finding {
 	f.Remediation = "Check explicit OIDC permission, federated subject/audience, identifiers and network access."
 	return f
 }
-func azureTargetUnknown(t policy.AzureTarget, err error) evidence.Finding {
-	f := evidence.NewFinding("TF-CLOUD-AZ-002", "Azure read-only operation: "+t.Name, "cloud", evidence.SeverityNote, evidence.Unknown, evidence.StatusUnknown, "Azure request failed: "+evidence.SafeError(err))
+func azureTargetUnknown(t policy.AzureTarget, outcome string) evidence.Finding {
+	f := evidence.NewFinding("TF-CLOUD-AZ-002", "Azure read-only operation: "+t.Name, "cloud", evidence.SeverityNote, evidence.Unknown, evidence.StatusUnknown, "Azure read-only operation did not complete")
 	f.Implications = "Failure does not prove the identity lacks this or other capabilities."
 	f.Remediation = "Review Azure response telemetry and retry only within the authorised scope."
-	f.Evidence = map[string]any{"provider": "azure", "target": t.Name, "response_body_recorded": false}
+	f.Evidence = map[string]any{"provider": "azure", "target": t.Name, "outcome": outcome, "response_body_recorded": false}
 	return f
 }
 func uuidLike(s string) bool {
@@ -207,7 +209,7 @@ func summarizeAzureBody(resp *http.Response, target policy.AzureTarget) map[stri
 	var list struct {
 		Value []json.RawMessage `json:"value"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&list); err != nil {
+	if err := decodeBoundedJSON(resp.Body, 4<<20, &list); err != nil {
 		return map[string]any{"role_assignment_summary": "response could not be summarized"}
 	}
 	return map[string]any{"returned_role_assignment_count": len(list.Value), "role_assignment_fields_recorded": false}

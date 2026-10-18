@@ -81,12 +81,40 @@ func TestNoNewPrivilegesDisabledIsFailure(t *testing.T) {
 	}
 }
 
-func TestUIDMappingDistinguishesRemappedRoot(t *testing.T) {
-	if mapsHost, valid := uidZeroMapsToHostZero("0 100000 65536"); !valid || mapsHost {
-		t.Fatalf("remapped UID 0 misclassified: mapsHost=%t valid=%t", mapsHost, valid)
+func TestUIDMappingReportsParentNamespaceWithoutClaimingHostIdentity(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "self", "attr"), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	if mapsHost, valid := uidZeroMapsToHostZero("0 0 4294967295"); !valid || !mapsHost {
-		t.Fatalf("initial mapping misclassified: mapsHost=%t valid=%t", mapsHost, valid)
+	files := map[string]string{
+		"status":    "Uid:\t0\t0\t0\t0\nCapEff:\t0\nCapPrm:\t0\nCapBnd:\t0\nSeccomp:\t2\nNoNewPrivs:\t1\n",
+		"uid_map":   "1 200001 10\n0 100000 1\n",
+		"gid_map":   "0 100000 65536\n",
+		"mountinfo": "1 2 0:1 / / rw - overlay overlay rw\n",
+	}
+	for name, value := range files {
+		if err := os.WriteFile(filepath.Join(root, "self", name), []byte(value), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	findings, err := (Probe{ProcRoot: root}).Run(context.Background(), engine.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mapping, privileged evidence.Finding
+	for _, finding := range findings {
+		switch finding.RuleID {
+		case "TF-ISO-004":
+			mapping = finding
+		case "TF-ISO-008":
+			privileged = finding
+		}
+	}
+	if mapping.Status != evidence.StatusInfo || mapping.Evidence["uid_map_entry_count"] != 2 || mapping.Evidence["uid_zero_maps_to_parent_uid_zero"] != false || mapping.Evidence["initial_user_namespace_established"] != false {
+		t.Fatalf("mapping evidence was overstated: %+v", mapping)
+	}
+	if privileged.Severity != evidence.SeverityMedium || privileged.Evidence["initial_user_namespace_established"] != false {
+		t.Fatalf("privileged finding was overstated: %+v", privileged)
 	}
 }
 
