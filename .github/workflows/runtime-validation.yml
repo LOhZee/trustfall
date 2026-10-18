@@ -297,7 +297,7 @@ jobs:
 
           jq -e '.audit_exit == 0 and .enforce_exit == 2 and .malformed_policy_exit == 1 and .malformed_report_exists == false' \
             reports/default/default-validation-exits.json >/dev/null
-          jq -e '.run.policy_mode == "enforce" and ([.findings[] | select(.rule_id == "TF-ID-001" and .status == "fail")] | length == 1)' \
+          jq -e '.run.policy_mode == "enforce" and ([.findings[] | select(.rule_id == "TF-ID-001" and .evidence_classification == "observed" and .status == "pass" and .expected_condition == "process must run as root for this deliberately failing validation" and .evidence.uid != 0)] | length == 1)' \
             reports/default/default-enforce.json >/dev/null
 
           jq -e '
