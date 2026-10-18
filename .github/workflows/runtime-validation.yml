@@ -90,7 +90,7 @@ jobs:
           umask 077
           printf '%s\n' 'version: "1"' 'mode: enforce' 'fail_on: critical' 'expectations:' '  TF-ID-001:' '    status: fail' '    condition: process must run as root for this deliberately failing validation' > "$RUNNER_TEMP/enforce.yaml"
           set +e
-          trustfall assess --profile custom --policy "$RUNNER_TEMP/enforce.yaml" --no-network --output "$RUNNER_TEMP/enforce.json"
+          trustfall assess --profile custom --policy "$RUNNER_TEMP/enforce.yaml" --no-network --output "$RUNNER_TEMP/default-enforce.json"
           enforce_status=$?
           printf '%s\n' 'version: "1"' 'mode: audit' 'unknown_field: true' > "$RUNNER_TEMP/malformed.yaml"
           trustfall assess --profile custom --policy "$RUNNER_TEMP/malformed.yaml" --no-network --output "$RUNNER_TEMP/malformed.json"
@@ -102,14 +102,13 @@ jobs:
           malformed_report=false
           if [ -e "$RUNNER_TEMP/malformed.json" ]; then malformed_report=true; fi
           printf '{"audit_exit":0,"enforce_exit":%s,"malformed_policy_exit":%s,"malformed_report_exists":%s}\n' \
-            "$enforce_status" "$malformed_status" "$malformed_report" > "$RUNNER_TEMP/validation-exits.json"
+            "$enforce_status" "$malformed_status" "$malformed_report" > "$RUNNER_TEMP/default-validation-exits.json"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: runtime-default
-          path: |
-            ${{ runner.temp }}/default.*
-            ${{ runner.temp }}/enforce.json
-            ${{ runner.temp }}/validation-exits.json
+          # One glob gives upload-artifact a single stable least-common path;
+          # multiple absolute paths are otherwise archived with /__w/_temp.
+          path: ${{ runner.temp }}/default*
           if-no-files-found: error
 
   passive-hardened:
@@ -297,9 +296,9 @@ jobs:
           ' reports/default/default.json >/dev/null
 
           jq -e '.audit_exit == 0 and .enforce_exit == 2 and .malformed_policy_exit == 1 and .malformed_report_exists == false' \
-            reports/default/validation-exits.json >/dev/null
+            reports/default/default-validation-exits.json >/dev/null
           jq -e '.run.policy_mode == "enforce" and ([.findings[] | select(.rule_id == "TF-ID-001" and .status == "fail")] | length == 1)' \
-            reports/default/enforce.json >/dev/null
+            reports/default/default-enforce.json >/dev/null
 
           jq -e '
             [.findings[] | select(
