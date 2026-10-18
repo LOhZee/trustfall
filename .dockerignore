@@ -1,10 +1,7 @@
 .git
 .github
-assets
-attack
 docs
 examples
-infra
 *.json
 *.md
 trustfall

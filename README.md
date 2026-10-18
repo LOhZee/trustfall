@@ -132,6 +132,4 @@ The hosted integration workflow is intentionally gated on an immutable-image rep
 - [Example workflows](examples/workflows)
 - [Contributing](CONTRIBUTING.md) and [security policy](SECURITY.md)
 
-Historical Azure policy/OIDC demonstration material remains in `infra/`, `attack/`, and `assets/`. Its executable workflows were moved to `docs/legacy/azure-demo-workflows/*.disabled`; they are not part of TrustFall and GitHub will not run them.
-
 Licensed under Apache-2.0.
