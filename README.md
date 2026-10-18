@@ -48,7 +48,7 @@ This creates a genuine `jobs.scanner.container` job with `--init --cap-drop=ALL 
 
 | Module | Passive evidence | Optional active evidence |
 |---|---|---|
-| Runtime identity | UID/GID, GitHub run context, token-facility presence | Selected OIDC claims; raw JWT is discarded |
+| Runtime identity | UID/GID, GitHub run context, token-facility presence | Selected OIDC claims; raw JWT is excluded from reports |
 | Container isolation | capabilities, seccomp, LSM label, user mappings, cgroups, mounts, runtime sockets | none |
 | Credential exposure | matching environment names and credential-file metadata | none; values and file contents are never read |
 | Network boundaries | configured target definitions | DNS, one TCP connection, or one HTTPS HEAD per allowlisted target; optional body-free metadata HEAD |
@@ -108,7 +108,9 @@ The reusable workflow is preferred because it owns and assesses a real container
 
 ## Active probes and OIDC
 
-Network, metadata and cloud destinations come only from the policy allowlist. `--no-network` overrides every network-capable probe. Passive [`scan.yml`](.github/workflows/scan.yml) has only `contents: read`; it observes OIDC facility presence and explicitly reports that issuance was not tested. OIDC-enabled [`scan-oidc.yml`](.github/workflows/scan-oidc.yml) declares `id-token: write`, requests a token, and locally validates issuer, requested audience, subject presence and temporal claims. It discards the JWT and does not independently verify its signature. External callers must also explicitly grant `id-token: write` to the job that calls the reusable workflow.
+Network, metadata and cloud destinations come only from the policy allowlist. `--no-network` overrides every network-capable probe. A negative expectation is intentionally narrow: set `expect_reachable: false` and explicitly choose `negative_evidence: dns_nxdomain` or `connection_refused`. Only that exact bounded outcome passes; timeout, cancellation and TLS errors remain inconclusive and no result claims universal isolation.
+
+Passive [`scan.yml`](.github/workflows/scan.yml) has only `contents: read`; it observes OIDC facility presence and explicitly reports that issuance was not tested. OIDC-enabled [`scan-oidc.yml`](.github/workflows/scan-oidc.yml) declares `id-token: write`, requests a token, and locally validates issuer, requested audience, subject presence and temporal claims. It excludes the JWT from reports and does not independently verify its signature. External callers must also explicitly grant `id-token: write` to the job that calls the reusable workflow.
 
 OIDC facility presence is not token issuance. Token issuance is not cloud federation. Cloud federation is not successful resource access. TrustFall reports each operation separately and never requests cloud credentials merely because OIDC is enabled. Every cloud provider additionally requires its own `cloud.<provider>.enabled: true` configuration and explicit read-only targets. AWS query APIs accept only a small operation allowlist, Azure targets are restricted to `management.azure.com`, and GCP targets are restricted to `*.googleapis.com`. An Azure role-assignment list target records only the returned object count, never assignment fields or a response body. Protected manual examples are provided for [AWS](examples/workflows/aws-federation.yml), [Azure](examples/workflows/azure-federation.yml), and [GCP](examples/workflows/gcp-federation.yml).
 

@@ -83,9 +83,6 @@ jobs:
           printf '## Default container validation\n' >> "$GITHUB_STEP_SUMMARY"
           trustfall doctor
           trustfall assess --profile baseline --no-network --output "$RUNNER_TEMP/default.json" --sarif "$RUNNER_TEMP/default.sarif" --summary "$GITHUB_STEP_SUMMARY"
-          grep -q '"network_denied": true' "$RUNNER_TEMP/default.json"
-          grep -q '"rule_id": "TF-ID-004"' "$RUNNER_TEMP/default.json"
-          grep -q '"status": "fail"' "$RUNNER_TEMP/default.json"
       - name: Validate deterministic enforcement and malformed-policy exits
         shell: sh
         run: |
@@ -101,10 +98,18 @@ jobs:
           set -e
           test "$enforce_status" -eq 2
           test "$malformed_status" -eq 1
+
+          malformed_report=false
+          if [ -e "$RUNNER_TEMP/malformed.json" ]; then malformed_report=true; fi
+          printf '{"audit_exit":0,"enforce_exit":%s,"malformed_policy_exit":%s,"malformed_report_exists":%s}\n' \
+            "$enforce_status" "$malformed_status" "$malformed_report" > "$RUNNER_TEMP/validation-exits.json"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: runtime-default
-          path: ${{ runner.temp }}/default.*
+          path: |
+            ${{ runner.temp }}/default.*
+            ${{ runner.temp }}/enforce.json
+            ${{ runner.temp }}/validation-exits.json
           if-no-files-found: error
 
   passive-hardened:
@@ -145,8 +150,6 @@ jobs:
         run: |
           set -eu
           trustfall assess --profile baseline --request-oidc --output "$RUNNER_TEMP/no-oidc.json"
-          grep -q 'OIDC request facilities are absent' "$RUNNER_TEMP/no-oidc.json"
-          grep -q '"evidence_classification": "unknown"' "$RUNNER_TEMP/no-oidc.json"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: runtime-no-oidc
@@ -171,9 +174,6 @@ jobs:
         run: |
           set -eu
           trustfall assess --profile baseline --request-oidc --oidc-audience trustfall --output "$RUNNER_TEMP/oidc.json" --summary "$GITHUB_STEP_SUMMARY"
-          grep -q '"issuer_valid": true' "$RUNNER_TEMP/oidc.json"
-          grep -q '"audience_valid": true' "$RUNNER_TEMP/oidc.json"
-          grep -q '"temporal_claims_valid": true' "$RUNNER_TEMP/oidc.json"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: runtime-oidc
@@ -221,10 +221,6 @@ jobs:
           trustfall assess --profile custom --policy "$RUNNER_TEMP/network.yaml" --timeout 15s \
             --output "$RUNNER_TEMP/network.json" --sarif "$RUNNER_TEMP/network.sarif" \
             --summary "$GITHUB_STEP_SUMMARY"
-          verified_targets="$(awk '/"rule_id": "TF-NET-001"/ { target=1; next } target && /"evidence_classification": "verified"/ { count++; target=0 } END { print count+0 }' "$RUNNER_TEMP/network.json")"
-          metadata_targets="$(awk '/"rule_id": "TF-NET-002"/ { count++ } END { print count+0 }' "$RUNNER_TEMP/network.json")"
-          test "$verified_targets" -eq 3
-          test "$metadata_targets" -eq 3
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: runtime-network
@@ -257,3 +253,100 @@ jobs:
           name: runtime-comparison
           path: comparison.json
           if-no-files-found: error
+
+  validate-artifacts:
+    needs: [passive-default, passive-hardened, oidc-unavailable, oidc-enabled, network-boundaries, compare]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: runtime-default
+          path: reports/default
+      - uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: runtime-hardened
+          path: reports/hardened
+      - uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: runtime-no-oidc
+          path: reports/no-oidc
+      - uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: runtime-oidc
+          path: reports/oidc
+      - uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: runtime-network
+          path: reports/network
+      - uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: runtime-comparison
+          path: reports/comparison
+      - name: Assert report meaning with structured JSON queries
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          jq -e '
+            .run.network_denied == true and
+            ([.findings[] | select(.rule_id == "TF-ID-004" and .evidence_classification == "unknown" and .status == "not_applicable" and .evidence.token_requested == false)] | length == 1) and
+            ([.findings[] | select(.rule_id == "TF-ISO-001" and .evidence_classification == "observed")] | length == 1)
+          ' reports/default/default.json >/dev/null
+
+          jq -e '.audit_exit == 0 and .enforce_exit == 2 and .malformed_policy_exit == 1 and .malformed_report_exists == false' \
+            reports/default/validation-exits.json >/dev/null
+          jq -e '.run.policy_mode == "enforce" and ([.findings[] | select(.rule_id == "TF-ID-001" and .status == "fail")] | length == 1)' \
+            reports/default/enforce.json >/dev/null
+
+          jq -e '
+            [.findings[] | select(
+              .rule_id == "TF-ID-004" and
+              .evidence_classification == "unknown" and
+              .status == "unknown" and
+              .evidence.token_requested == true and
+              .evidence.token_issued == false and
+              .evidence.raw_token_recorded == false
+            )] | length == 1
+          ' reports/no-oidc/no-oidc.json >/dev/null
+
+          jq -e '
+            [.findings[] | select(
+              .rule_id == "TF-ID-004" and
+              .evidence_classification == "verified" and
+              .status == "pass" and
+              .evidence.issuer_valid == true and
+              .evidence.audience_valid == true and
+              .evidence.subject_present == true and
+              .evidence.temporal_claims_valid == true and
+              .evidence.signature_verified == false and
+              .evidence.raw_token_recorded == false and
+              .evidence.memory_erasure_guaranteed == false
+            )] | length == 1
+          ' reports/oidc/oidc.json >/dev/null
+
+          jq -e '
+            ([.findings[] | select(.rule_id == "TF-NET-001" and .evidence_classification == "verified" and .status == "pass" and .evidence.operation_succeeded == true)] | length == 3) and
+            ([.findings[] | select(.rule_id == "TF-NET-001" and .evidence.target == "github-dns" and .evidence.outcome == "dns_resolved")] | length == 1) and
+            ([.findings[] | select(.rule_id == "TF-NET-001" and .evidence.target == "github-tcp" and .evidence.outcome == "tcp_connected")] | length == 1) and
+            ([.findings[] | select(.rule_id == "TF-NET-001" and .evidence.target == "github-https" and .evidence.outcome == "http_response" and (.evidence.http_status | type == "number"))] | length == 1) and
+            ([.findings[] | select(.rule_id == "TF-NET-002")] | length == 3) and
+            ([.findings[] | select(.rule_id == "TF-NET-002" and (.status == "informational" or .status == "unknown") and .status != "fail" and .evidence.metadata_retrieved == false and .evidence.credential_path_requested == false and .evidence.credential_exposure_tested == false and .evidence.response_body_read == false)] | length == 3)
+          ' reports/network/network.json >/dev/null
+
+          jq -e '
+            .context.runtime_comparable == false and
+            ([.changes[] | select(.rule_id == "TF-ISO-001" and .category == "improvement" and (.before.evidence.capbnd | length > 0) and (.after.evidence.capbnd | length == 0))] | length == 1) and
+            ([.changes[] | select(.rule_id == "TF-ISO-002" and .category == "improvement" and .before.evidence.no_new_privileges == false and .after.evidence.no_new_privileges == true)] | length == 1)
+          ' reports/comparison/comparison.json >/dev/null
+
+      - name: Reject credential-shaped artifact content
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -EIR 'eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.|Bearer[[:space:]]+[A-Za-z0-9._~-]{8,}|AKIA[0-9A-Z]{16}' reports; then
+            echo "credential-shaped content found in runtime artifacts" >&2
+            exit 1
+          fi

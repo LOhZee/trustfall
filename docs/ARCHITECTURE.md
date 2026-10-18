@@ -16,7 +16,7 @@ Stable rules describe one security property. Multi-target operations add the pol
 
 ## Trust boundaries
 
-The CLI treats the process environment, procfs, mounts, policy file, DNS, remote endpoints and provider responses as untrusted input. It limits policy files and token responses to 1 MiB, never records tokens or cloud response bodies, follows no cloud redirects, and restricts HTTPS redirects to the original origin for generic probes. AWS targets must match their declared service and region and permit only GET/HEAD plus an allowlist for query-style actions. Azure targets are limited to `management.azure.com` GET/HEAD operations. GCP targets are limited to `*.googleapis.com` GET/HEAD operations, and the GitHub/STS audiences are derived from one validated workload identity provider name.
+The CLI treats the process environment, procfs, mounts, policy file, DNS, remote endpoints and provider responses as untrusted input. It limits policy files and token responses to 1 MiB, never records tokens or cloud response bodies, disables ambient proxies and redirects for credential-bearing clients, and restricts HTTPS redirects to the original origin for generic probes. Host restrictions are re-evaluated by normal TLS hostname verification at connection time; TrustFall does not pin resolved IP addresses, so compromise of a trusted hostname or the runner's DNS/root store remains a residual boundary. AWS targets must match their declared service and region and permit only GET/HEAD plus an allowlist for query-style actions. Azure targets are limited to `management.azure.com` GET/HEAD operations. GCP targets are limited to `*.googleapis.com` GET/HEAD operations, and the GitHub/STS audiences are derived from one validated workload identity provider name.
 
 The passive and OIDC-enabled reusable workflows each own a real GitHub container job. Their permissions are statically distinct because a running job cannot elevate itself to `id-token: write`. The composite Marketplace action runs inside the caller’s already-created job and therefore cannot assess a boundary it did not create. This is a GitHub Actions platform distinction, not an implementation detail.
 
@@ -25,7 +25,9 @@ The passive and OIDC-enabled reusable workflows each own a real GitHub container
 - JWT claims are decoded, not cryptographically verified by TrustFall. Token issuance itself is verified by the authenticated GitHub endpoint; `signature_verified: false` is recorded.
 - Seccomp mode and LSM labels are observations, not proof that their policies block a particular exploit.
 - Filesystem credential probes inspect metadata and accessibility only, never contents.
-- TCP/HTTPS success proves one connection/request. Failure remains inconclusive.
+- TCP/HTTPS success proves one connection/request. NXDOMAIN or refusal proves only that exact attempt; it satisfies a negative expectation only when the policy explicitly accepts that evidence type. Timeout, cancellation and unavailable probes remain inconclusive.
+- A metadata HTTP response is not credential exposure. Provider identification requires provider-specific response evidence; the probe never requests credentials or reads the body.
+- User-namespace maps establish only parent-namespace mappings, not a relationship to the host's initial user namespace.
 - Cloud permission discovery is operation-based. TrustFall does not synthesize a universal effective permission set from one response.
 - AWS federation currently supports the commercial `aws` partition. Alternate partitions require separately validated STS audiences and endpoints.
 - GCP supports direct Workload Identity Federation. Service-account impersonation is intentionally not performed automatically.
